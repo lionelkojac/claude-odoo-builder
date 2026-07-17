@@ -23,14 +23,16 @@ workflows/  # Markdown SOPs
 .env        # Credentials — NEVER commit this
 ```
 
-## Project: 19prince
+## Project: Kerger
 
-- **Server:** https://19prince-staging-30854879.dev.odoo.com
-- **DB:** 19prince-staging-30854879
+- **Server:** https://kerger.odoo.com
+- **DB:** kerger
 - **Brand colors:** TBD
 - **Brand fonts:** TBD
 - **Design direction:** TBD
 - **Logo:** TBD
+
+> ⚠️ This server has no separate staging instance on record — treat it as live. Always use `--dry-run` before any migration and double-check before publishing.
 
 ## Key Workflows
 
