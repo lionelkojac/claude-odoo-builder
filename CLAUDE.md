@@ -27,10 +27,11 @@ workflows/  # Markdown SOPs
 
 - **Server:** https://kerger.odoo.com
 - **DB:** kerger
-- **Brand colors:** TBD
-- **Brand fonts:** TBD
-- **Design direction:** TBD
-- **Logo:** TBD
+- **Design system:** claude.ai/design project "Kerger Design System" (`b14a74a0-f823-4b71-a694-5c83ee794fa8`) — fetch tokens via DesignSync; treat it as the source of truth for brand values
+- **Brand colors:** blue `#00B9F2`, orange `#FF5B1E` (only two in source art, flat fields — no gradients); deep navy `#0B2942` for inverse surfaces; ink `#0B1B26` for text; cool blue-grey neutral ramp (`#F4F7F9`…`#0F1720`)
+- **Brand fonts:** Outfit (display/headings), Inter (body), IBM Plex Mono (SKUs) — Google Fonts substitutions, exact brand face unknown (logo is outlined paths)
+- **Design direction:** formal-but-warm B2B wholesaler (marine/offshore electrotechnical); white surfaces, thin subtle borders, small radii (3–10px), navy-tinted shadows on hover only, duotone-blue marine photography, no emoji/no hype copy
+- **Logo:** lockup in design system at `assets/logo/kerger-logo-lockup.png` (white KERGER on blue field, orange payoff band)
 
 > ⚠️ This server has no separate staging instance on record — treat it as live. Always use `--dry-run` before any migration and double-check before publishing.
 
