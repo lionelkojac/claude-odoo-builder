@@ -178,5 +178,17 @@ c._execute_kw('ir.ui.view', 'update_field_translations',
               [[view_id], 'arch_db', {'nl_NL': {"English term": "Dutch term", ...}}], {})
 ```
 
-Terms must exactly match the text nodes in the arch (unescaped, including dashes).
-Verify both `/{url}` and `/nl/{url}` afterwards. Done for `/about-us` (view 2362) 2026-07-22.
+Terms must match Odoo's **exact** source strings — don't hand-type them. Get them with
+`get_field_translations([[view_id]], 'arch_db')` and copy each `source` verbatim: they
+keep XML entities (`&amp;`, `&amp;nbsp;`) and include inline tags like trailing `<br/>`
+as part of the term. A literal `&` or a dropped `<br/>` silently fails to match (no
+error, term just stays English). Verify both `/{url}` and `/nl/{url}` afterwards.
+Done for `/about-us` (view 2362) 2026-07-22.
+
+## Editing an existing page's TEXT only (not layout)
+
+When the user wants copy changed but the design kept: fetch the live `arch_db`, do exact
+string replacements on **text nodes only**, and assert the tag structure is unchanged
+(`re.findall(r'<[^>]+>', arch)` identical before/after) before writing. Do NOT rebuild the
+page from section templates — that replaces their design. Back up `arch_db` first; restoring
+is a single `write` of the backup.
