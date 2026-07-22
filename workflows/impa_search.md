@@ -41,3 +41,17 @@ sign-off since it is a standing job on the production DB.)
 ## Verified 2026-07-22
 459 published products, 182 with IMPA. After sync, `/shop?search=<impa>` returns
 the matching product; the IMPA code is not visible on product pages.
+
+## Shop search placeholder
+The product search bar placeholder reads **"Search (Kerger/IMPA/ISSA/text)"**.
+Set in two views (product-search scope only — the site-wide header "all" search
+keeps "Search..."):
+- `website_sale.search` (view 2017): `placeholder.f="Search (Kerger/IMPA/ISSA/text)"` on the searchbox t-call.
+- `website_sale.products` (view 2025): `<t t-else>` fallback after the category placeholder, for the mobile modal + offcanvas inputs.
+
+Backups: `.tmp/backup_view_2017_search.xml`, `.tmp/backup_view_2025_products.xml`.
+
+> ⚠️ **ISSA is advertised but not searchable** — there is no ISSA field on
+> `product.template` (only `x_studio_impa`). Searching an ISSA code returns
+> nothing. Either add an ISSA field + extend `sync_impa_search.py` to mirror it,
+> or drop "ISSA" from the placeholder.
