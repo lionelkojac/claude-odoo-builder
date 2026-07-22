@@ -133,6 +133,11 @@ ODOO_USER={login_email}
 ODOO_PASSWORD=
 ```
 
+> ⚠️ If the password contains `#`, `\`, quotes, or spaces, wrap the value in
+> single quotes (`ODOO_PASSWORD='p#ss\word'`) — unquoted, dotenv treats `#` as
+> a comment start and silently truncates the value. The same truncation can
+> happen in CI/environment-variable UIs; verify the stored value's length.
+
 ---
 
 ## Step 6 — Create `CLAUDE.md`

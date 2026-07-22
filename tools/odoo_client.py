@@ -14,7 +14,9 @@ import sys
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+# override=True: .env is this project's canonical credential store — it must
+# win over ambient shell variables (which some environments truncate or stale).
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 
 class OdooClient:
