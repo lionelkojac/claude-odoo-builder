@@ -48,6 +48,9 @@ c.write("website", [site_id], {"custom_code_head": new_head})
 | `sections` | `.tmp/sections.css` | `#wrap section.o_cc1–5` | Color-combo mapping: dark→navy `#0B2942`, light→white/cool neutrals; card hover style |
 | `forms` | `.tmp/forms.css` | `.form-control`, `.s_website_form_*` | White inputs, cool borders, blue focus ring |
 | `footer` | `.tmp/footer.css` | `footer#bottom` | Brand-navy footer, blue links, orange hover |
+| `hero` | `.tmp/hero.css` | `.o_website_url_home .s_kickoff` | Homepage banner at true 16:9, no parallax crop |
+
+> **Contrast note:** Odoo color-combos in the Orchid theme — `o_cc1` white, `o_cc2` `#f0f2f5`, `o_cc3` tan `#e0ccaf`, `o_cc4` blue `#0A58CA`, `o_cc5` navy `#141f2e`. The `sections` block forces light text on `o_cc4`/`o_cc5`; because Bootstrap's `.card` white bg beats Odoo's `o_cc` bg, cards carrying `o_cc4`/`o_cc5` also get an explicit navy/blue background so text stays legible. Avoid a blanket `#wrapwrap { color }` that fights the theme's per-combo text colors.
 
 ---
 
