@@ -184,7 +184,12 @@ class OdooClient:
 
     def search_read(self, model, domain=None, fields=None, limit=0, offset=0):
         """Return list of dicts matching domain."""
-        kwargs = {"fields": fields or [], "limit": limit, "offset": offset}
+        # Odoo saas~19 treats limit=0 as "return 0 rows" — omit it for "no limit"
+        kwargs = {"fields": fields or []}
+        if limit:
+            kwargs["limit"] = limit
+        if offset:
+            kwargs["offset"] = offset
         return self._execute_kw(model, "search_read", [domain or []], kwargs)
 
     def read(self, model, ids, fields=None):
@@ -193,7 +198,8 @@ class OdooClient:
 
     def search(self, model, domain=None, limit=0):
         """Return list of matching record IDs."""
-        return self._execute_kw(model, "search", [domain or []], {"limit": limit})
+        kwargs = {"limit": limit} if limit else {}
+        return self._execute_kw(model, "search", [domain or []], kwargs)
 
     def create(self, model, values):
         """Create a record. Returns new record ID."""
