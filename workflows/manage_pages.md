@@ -146,3 +146,15 @@ These domains can be passed directly to `odoo_client.search_read()` if writing c
 3. **Batch inspection** — `.tmp/pages_list.json` can be parsed to build a site map
 4. **Compare versions** — `diff .tmp/backup_about.html .tmp/draft_about.html` to review changes before pushing
 5. **Test unpublished** — push first, open `/web/preview?url=/about` in Odoo to preview before publishing
+
+---
+
+## Kerger Site Map & Language Setup (verified 2026-07-22)
+
+**Five website records exist in this DB.** The live site is **website 1** (`kerger`, domain kerger.odoo.com). Websites 2 (kerger2), 3 & 5 (Imported Website) have no domain; website 4 (Kergertest) maps to kerger2.odoo.com. Do not archive other websites' homepages — each website needs its own.
+
+**Global vs website-specific pages:** pages with `website_id=False` are global and serve on any website *unless* shadowed by a website-specific page at the same URL. Archived as dead in 2026-07: global `/` (page 2, shadowed everywhere) and global `/contactus` (page 3, unpublished + shadowed).
+
+**Live pages on website 1:** `/` (page 4, view 916), `/about-us` (5), `/pricing` (6), `/privacy` (7), `/contactus` (10), `/code-of-conduct` (11), `/cookie-policy` (12), plus global `/contactus-thank-you` (page 1 — global, do NOT archive) and global `/privacy` fallback (page 18, shadowed on ws1).
+
+**Languages:** en_US (default) + nl_NL both active. Odoo auto-redirects by browser `Accept-Language` (verified: Dutch browser → 303 to `/nl/`). URL scheme: `/` = English, `/nl/` = Dutch. **Content translations largely don't exist** — both URLs serve the same source text (e.g. `/privacy` is Dutch on both sides). To fix a page: put English in the view source (`arch_db`), then add Dutch via `update_field_translations` on the view for `nl_NL` — never by creating a second page at another URL.
