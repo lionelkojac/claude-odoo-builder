@@ -51,7 +51,12 @@ keeps "Search..."):
 
 Backups: `.tmp/backup_view_2017_search.xml`, `.tmp/backup_view_2025_products.xml`.
 
-> ⚠️ **ISSA is advertised but not searchable** — there is no ISSA field on
-> `product.template` (only `x_studio_impa`). Searching an ISSA code returns
-> nothing. Either add an ISSA field + extend `sync_impa_search.py` to mirror it,
-> or drop "ISSA" from the placeholder.
+> **ISSA not searchable yet** — there is no ISSA field on `product.template`
+> today (only `x_studio_impa`), so searching an ISSA code returns nothing. The
+> placeholder advertises it intentionally (user will add the field later).
+>
+> **When the ISSA field is created:** name the Studio field **"ISSA"** (→
+> `x_studio_issa`). `sync_impa_search.py` auto-detects it (via `CODE_LABELS`) and
+> mirrors it into the search index alongside IMPA — just populate the values and
+> re-run `python3 tools/sync_impa_search.py`. No code change needed. To make a
+> differently-named field searchable, add its label to `CODE_LABELS`.
