@@ -192,3 +192,32 @@ float `x_studio_wattage2_w` is empty). Product description → `x_studio_descrip
 space, empty), "Multiline description" (empty), or `x_AI_description`
 ("Full description", char — contains test junk). Added Wattage (seq 15) and
 Description (seq 30) to website 1's product pages 2026-07-22.
+
+---
+
+## Shop sidebar filters (product attributes)
+
+Odoo's left-sidebar shop filters come **only** from `product.attribute` values —
+Studio custom fields cannot drive them (and on Odoo Online there's no module
+option to change that). `tools/build_product_filters.py` bridges this: it creates
+**no-variant** attributes from Studio fields and links each product to the
+matching value, so the attribute appears as a sidebar filter without generating
+variants.
+
+```bash
+python3 tools/build_product_filters.py --only Socket --dry-run
+python3 tools/build_product_filters.py            # all configured attrs
+```
+
+- Config is the `ATTRS` list (attribute name, source Studio field, value fn).
+  Value fns: `exact`, `bucket_watt` (ranges), `kelvin` (adds " K", skips 0/empty).
+- Idempotent: skips products already linked; reuses existing attributes/values.
+- **Lamps filters built 2026-07-22:** Socket, Voltage (exact); Wattage (buckets
+  ≤2/3–5/6–15/16–40/41–100/100 W+); Color Temperature (2500–4000 K). Lumen pending
+  a field — add an ATTRS entry once `x_studio_lumen` exists and re-run.
+
+> ⚠️ **Pre-existing attributes:** the tool reuses an attribute if one already
+> exists by name. "Color Temperature" pre-existed with `create_variant='always'`
+> and `visibility='hidden'` — had to set visibility=visible manually (create_variant
+> is locked once in use, but 'always' is harmless when each product has one value:
+> no variant explosion). New attributes are created no-variant + visible.
