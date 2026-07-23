@@ -158,3 +158,37 @@ These domains can be passed directly to `odoo_client.search_read()` if writing c
 **Live pages on website 1:** `/` (page 4, view 916), `/about-us` (5), `/pricing` (6), `/privacy` (7), `/contactus` (10), `/code-of-conduct` (11), `/cookie-policy` (12), plus global `/contactus-thank-you` (page 1 — global, do NOT archive) and global `/privacy` fallback (page 18, shadowed on ws1).
 
 **Languages:** en_US (default) + nl_NL both active. Odoo auto-redirects by browser `Accept-Language` (verified: Dutch browser → 303 to `/nl/`). URL scheme: `/` = English, `/nl/` = Dutch. **Content translations largely don't exist** — both URLs serve the same source text (e.g. `/privacy` is Dutch on both sides). To fix a page: put English in the view source (`arch_db`), then add Dutch via `update_field_translations` on the view for `nl_NL` — never by creating a second page at another URL.
+
+---
+
+## Product page spec fields (eCommerce)
+
+The spec list on `/shop/<product>` pages (Internal Reference, IMPA, Voltage, …)
+is **not** a template edit. It's Odoo's built-in eCommerce feature: the template
+`website_sale.ecom_show_extra_fields` (view 2132) loops over
+`website.shop_extra_field_ids` and shows each field **only where the product has
+a value**.
+
+To add/remove/reorder a field on the product page, edit the
+`website.sale.extra.field` records (not the view):
+
+```python
+# add a field to the product page
+imf = c._execute_kw('ir.model.fields','search',
+    [[['model','=','product.template'],['name','=','x_studio_wattage_w']]], {})[0]
+c._execute_kw('website.sale.extra.field','create',
+    [{'field_id': imf, 'sequence': 15, 'website_id': 1}], {})   # label auto-fills
+```
+
+- `name`/`label` are read-only (derived from `field_id`); set only `field_id`,
+  `sequence`, `website_id`.
+- Order = `sequence` then id.
+- Backend Studio form layout (view 3022) is separate — editing it does NOT change
+  the website page.
+
+**Kerger field notes:** Wattage → `x_studio_wattage_w` (char, populated; the
+float `x_studio_wattage2_w` is empty). Product description → `x_studio_description_long`
+(multiline **text**, ~50 products, real copy). NOT the "Description " (trailing
+space, empty), "Multiline description" (empty), or `x_AI_description`
+("Full description", char — contains test junk). Added Wattage (seq 15) and
+Description (seq 30) to website 1's product pages 2026-07-22.
