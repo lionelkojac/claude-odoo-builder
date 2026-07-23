@@ -38,19 +38,22 @@ CODE_LABELS = ["IMPA", "ISSA"]
 
 
 def resolve_code_fields(client):
-    """Return [(label, field_name)] for code fields that exist on the model."""
-    fg = client._execute_kw(MODEL, "fields_get", [], {"attributes": ["string"]})
+    """Return [(label, field_name)] for code fields that exist on the model.
+
+    When several fields share a code label (e.g. an old integer `x_studio_issa`
+    and a newer text `x_studio_issa_1`), prefer a char/text field — code values
+    can be multi-valued (comma-joined) and must not be truncated to an integer.
+    """
+    fg = client._execute_kw(MODEL, "fields_get", [], {"attributes": ["string", "type"]})
     resolved = []
     for label in CODE_LABELS:
-        guess = "x_studio_" + label.lower()
-        if guess in fg:
-            resolved.append((label, guess))
+        candidates = [k for k, v in fg.items()
+                      if k == "x_studio_" + label.lower()
+                      or str(v.get("string", "")).strip().lower() == label.lower()]
+        if not candidates:
             continue
-        # Fallback: any field whose label matches the code name exactly
-        match = next((k for k, v in fg.items()
-                      if str(v.get("string", "")).strip().lower() == label.lower()), None)
-        if match:
-            resolved.append((label, match))
+        text_first = sorted(candidates, key=lambda k: fg[k]["type"] not in ("char", "text"))
+        resolved.append((label, text_first[0]))
     return resolved
 
 

@@ -67,10 +67,11 @@ Loaded from `kerger_xref_ISSA.csv` (article code → ISSA), matched on
 (the other 1,733 are for products not on the site). Populated `x_studio_issa`
 (integer) for all 289 and re-ran the sync — ISSA is now searchable.
 
-> ⚠️ **Integer field = one ISSA per product.** 62 of the 289 products map to
-> **multiple** ISSA codes; only the **first** was stored (extras logged to
-> `.tmp/issa_multi_dropped.csv`). Those secondary codes are NOT searchable. To
-> capture them, switch `x_studio_issa` to a **Text** field in Studio, then re-run
-> a load that comma-joins the codes. Field snapshot before load:
-> `.tmp/issa_field_snapshot.json` (all were empty → revert = clear).
-> Note: the CSV and these logs live in `.tmp/` (gitignored), not the repo.
+**Update — full ISSA load (text field).** A **text** field `x_studio_issa_1`
+(label "ISSA") was later created, so all ISSA codes were reloaded there,
+comma-joined for the 62 multi-code products (e.g. `"7328304, 7320312"`). All
+codes — primary and secondary — are now searchable. The old integer
+`x_studio_issa` was cleared and is deprecated → **delete it in Studio** so only
+one ISSA field remains. `sync_impa_search.py` prefers the char/text field
+automatically when a label has both.
+> The CSV and load logs live in `.tmp/` (gitignored), not the repo.
