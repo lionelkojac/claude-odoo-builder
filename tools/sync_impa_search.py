@@ -93,8 +93,9 @@ def main():
 
     changed = 0
     for r in recs:
-        codes = [(label, (r.get(f) or "").strip())
-                 for label, f in code_fields if (r.get(f) or "").strip()]
+        codes = [(label, str(r.get(f)).strip())
+                 for label, f in code_fields
+                 if r.get(f) not in (False, None, "") and str(r.get(f)).strip()]
         current = r.get("description") or ""
         target = desired_description(current, codes)
         if (target or "") != (current or ""):

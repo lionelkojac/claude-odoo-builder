@@ -60,3 +60,17 @@ Backups: `.tmp/backup_view_2017_search.xml`, `.tmp/backup_view_2025_products.xml
 > mirrors it into the search index alongside IMPA — just populate the values and
 > re-run `python3 tools/sync_impa_search.py`. No code change needed. To make a
 > differently-named field searchable, add its label to `CODE_LABELS`.
+
+## ISSA data load (2026-07-22)
+Loaded from `kerger_xref_ISSA.csv` (article code → ISSA), matched on
+`default_code`. 2,022 CSV codes had ISSA; only **289 matched a live product**
+(the other 1,733 are for products not on the site). Populated `x_studio_issa`
+(integer) for all 289 and re-ran the sync — ISSA is now searchable.
+
+> ⚠️ **Integer field = one ISSA per product.** 62 of the 289 products map to
+> **multiple** ISSA codes; only the **first** was stored (extras logged to
+> `.tmp/issa_multi_dropped.csv`). Those secondary codes are NOT searchable. To
+> capture them, switch `x_studio_issa` to a **Text** field in Studio, then re-run
+> a load that comma-joins the codes. Field snapshot before load:
+> `.tmp/issa_field_snapshot.json` (all were empty → revert = clear).
+> Note: the CSV and these logs live in `.tmp/` (gitignored), not the repo.
