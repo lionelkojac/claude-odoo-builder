@@ -50,6 +50,31 @@ def exact(raw):
     return s or None
 
 
+# Nominal voltage groups: explicit ranges honour the requested buckets exactly;
+# anything outside them snaps to the nearest nominal ("really close = same").
+_V_ANCHORS = [(6, "6V"), (12, "12V"), (26, "24–28V"), (48, "48V"),
+              (60, "60V"), (110, "110V"), (220, "220V"), (380, "380V"), (440, "440V")]
+
+
+def bucket_voltage(raw):
+    import re as _re
+    nums = [int(n) for n in _re.findall(r"\d+", str(raw))]
+    if not nums:
+        return None
+    n = nums[0]
+    if n == 6:                      return "6V"
+    if n == 12:                     return "12V"
+    if 24 <= n <= 28:               return "24–28V"
+    if n == 48:                     return "48V"
+    if n == 60:                     return "60V"
+    if 100 <= n <= 130:             return "110V"
+    if 200 <= n <= 245:             return "220V"
+    if n == 380:                    return "380V"
+    if n == 440:                    return "440V"
+    # straggler → nearest nominal
+    return min(_V_ANCHORS, key=lambda a: abs(a[0] - n))[1]
+
+
 def kelvin(raw):
     if raw in (False, None, "", 0):
         return None
@@ -60,7 +85,7 @@ def kelvin(raw):
 # Each: attribute name, source Studio field, and how to derive the value label.
 ATTRS = [
     {"name": "Socket", "field": "x_studio_socket2", "fn": exact},
-    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": exact},
+    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage},
     {"name": "Wattage", "field": "x_studio_wattage_w", "fn": bucket_watt},
     {"name": "Color Temperature", "field": "x_studio_color_temperature", "fn": kelvin},
     # Lumen: add here once the field exists, e.g.

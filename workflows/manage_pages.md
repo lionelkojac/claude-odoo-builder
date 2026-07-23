@@ -221,3 +221,10 @@ python3 tools/build_product_filters.py            # all configured attrs
 > and `visibility='hidden'` — had to set visibility=visible manually (create_variant
 > is locked once in use, but 'always' is harmless when each product has one value:
 > no variant explosion). New attributes are created no-variant + visible.
+
+**Voltage buckets (updated 2026-07-22):** Voltage is grouped into nominal
+buckets, not exact values — `bucket_voltage()` maps explicit ranges (110V=100–130,
+220V=200–245) and snaps stragglers to the nearest nominal (30/36→24–28V,
+11/14/18→12V, 4/8→6V). To re-bucket after data changes: clear the Voltage
+attribute's lines + values, then re-run `--only Voltage` (deleting the attribute
+outright is blocked while it's in use).
