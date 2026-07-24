@@ -78,6 +78,10 @@ _RAW = [
     (r"\bMTRS\b", "METRES", "MTRS"),
     (r"\bMTR\b", "METRE", "MTR"),
     (r"\bMRT\b", "METRE", "MRT"),
+    # --- armoured (cable) ---
+    (r"\bARM\.", "ARMOURED ", "ARM."),
+    (r"\bARM\b", "ARMOURED", "ARM"),
+    (r"\bARMORED\b", "ARMOURED", "ARMORED"),
     # --- breaker curve + spelling ---
     (r"\b([BCD])-CAR\b", r"\1-CHARACTERISTIC", "x-CAR"),
     (r"\bNICKLE\b", "NICKEL", "NICKLE"),
