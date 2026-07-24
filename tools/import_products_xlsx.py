@@ -77,9 +77,9 @@ def build_values(r, public_categ_id):
         vals["list_price"] = float(r[8])
     if r[12] not in (None, "", 0):
         vals["weight"] = float(r[12])
-    bc = clean(r[15])
-    if bc and bc not in ("0", "None"):        # skip barcode if none
-        vals["barcode"] = bc
+    # NOTE: barcode intentionally NOT imported — the source EANs are not unique
+    # (same code on multiple products) and Odoo enforces barcode uniqueness,
+    # which aborts the import. Handle barcodes separately once de-duplicated.
     if public_categ_id:
         vals["public_categ_ids"] = [(6, 0, [public_categ_id])]
     return vals
@@ -135,6 +135,7 @@ def main():
 
     n_unarch = n_update = n_create = 0
     img_ok = img_fail = 0
+    row_errors = []
     for r in plan:
         ext = clean(r[0])
         vals = build_values(r, catcache.get(clean(r[6])))
@@ -150,25 +151,30 @@ def main():
             else:
                 img_fail += 1
                 print(f"  ! image fetch failed for {ext}")
-        if res and res in states:
-            archived = not states[res]
-            action = "UNARCHIVE+update" if archived else "update"
-            if archived:
-                n_unarch += 1
-            else:
-                n_update += 1
-            if args.apply:
+        try:
+            if res and res in states:
+                archived = not states[res]
+                action = "UNARCHIVE+update" if archived else "update"
                 if archived:
-                    vals["active"] = True
-                c._execute_kw("product.template", "write", [[res], vals], {})
-        else:
-            action = "CREATE"
-            n_create += 1
-            if args.apply:
-                new_id = c._execute_kw("product.template", "create", [vals], {})
-                c._execute_kw("ir.model.data", "create", [{
-                    "module": "__import__", "name": ext,
-                    "model": "product.template", "res_id": new_id}], {})
+                    n_unarch += 1
+                else:
+                    n_update += 1
+                if args.apply:
+                    if archived:
+                        vals["active"] = True
+                    c._execute_kw("product.template", "write", [[res], vals], {})
+            else:
+                action = "CREATE"
+                n_create += 1
+                if args.apply:
+                    new_id = c._execute_kw("product.template", "create", [vals], {})
+                    c._execute_kw("ir.model.data", "create", [{
+                        "module": "__import__", "name": ext,
+                        "model": "product.template", "res_id": new_id}], {})
+        except Exception as e:
+            row_errors.append((ext, str(e)[:120]))
+            print(f"  ! row {ext} failed: {str(e)[:100]}")
+            continue
         if args.dry_run:
             has_img = "img" if clean(r[18]) else "—"
             print(f"  {ext:<8} {action:<16} {vals['name'][:34]:<34} "
@@ -180,6 +186,9 @@ def main():
           f"({len(catcache)} categories resolved)")
     if args.apply:
         print(f"images: {img_ok} attached, {img_fail} failed")
+        print(f"row errors: {len(row_errors)}")
+        for ext, msg in row_errors[:20]:
+            print(f"  {ext}: {msg}")
     if args.dry_run:
         print("\n(dry-run — nothing written. Images NOT included; spec/search/stock "
               "columns intentionally skipped.)")
