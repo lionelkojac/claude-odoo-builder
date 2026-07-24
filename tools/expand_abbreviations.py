@@ -65,7 +65,10 @@ _RAW = [
     (r"\bLAMP\.", "LAMP ", "LAMP."),
     # --- non-period truncations ---
     (r"\bINDIC\b", "INDICATOR", "INDIC"),
+    (r"\bLMP(?=\d)", "LAMP ", "LMP#"),
     (r"\bLMP\b", "LAMP", "LMP"),
+    (r"\bTUB\b", "TUBULAR", "TUB"),
+    (r"\bIND\b", "INDICATOR", "IND"),
     (r"\bFLUOR\b", "FLUORESCENT", "FLUOR"),
     (r"\bTHERM\b", "THERMAL", "THERM"),
     (r"\bAUX\b", "AUXILIARY", "AUX"),
