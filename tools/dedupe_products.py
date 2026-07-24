@@ -32,6 +32,11 @@ from odoo_client import OdooClient
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--final", action="store_true",
+                    help="reduce EVERY remaining duplicate group to a single "
+                         "kept record (prefer External ID, then oldest); "
+                         "archive the rest. Default mode only archives copies "
+                         "that have no External ID at all.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true")
     g.add_argument("--apply", action="store_true")
@@ -67,29 +72,45 @@ def main():
                            [ids[i:i+300], ["sales_count"]], {})
         soset |= {x["id"] for x in rr if x["sales_count"]}
 
-    to_archive, skip_sales, skip_allext, skip_noext = [], [], [], []
-    for ref, members in groups.items():
-        haveext = [m for m in members if m["id"] in extset]
-        noext = [m for m in members if m["id"] not in extset]
-        if not noext:
-            skip_allext.append(ref)               # both have ext id
-            continue
-        if not haveext:
-            skip_noext.append(ref)                 # none have ext id (unexpected)
-            continue
-        for m in noext:
-            if m["id"] in soset:
-                skip_sales.append((ref, m["id"], m["name"]))
-            else:
+    to_archive, skip_sales, skip_allext, skip_noext, arch_sales = \
+        [], [], [], [], []
+    if args.final:
+        # keep ONE per group: prefer ext id, then oldest create_date
+        for ref, members in groups.items():
+            keep = sorted(members, key=lambda m: (
+                m["id"] not in extset, m["create_date"]))[0]
+            for m in members:
+                if m["id"] == keep["id"]:
+                    continue
                 to_archive.append((ref, m["id"], m["name"]))
-
-    print(f"duplicate groups: {len(groups)}")
-    print(f"records to archive (no ext id): {len(to_archive)}")
-    print(f"left as-is: both-have-extid groups={len(skip_allext)}, "
-          f"no-extid-at-all groups={len(skip_noext)}, "
-          f"sales-history records kept={len(skip_sales)}")
-    for ref, rid, nm in skip_sales:
-        print(f"  KEPT (has sales) {ref} id={rid} {nm[:40]}")
+                if m["id"] in soset:
+                    arch_sales.append((ref, m["id"], m["name"]))
+        print(f"duplicate groups: {len(groups)}")
+        print(f"records to archive (final, keep 1/group): {len(to_archive)}")
+        for ref, rid, nm in arch_sales:
+            print(f"  NOTE archiving a record WITH sales: {ref} id={rid} {nm[:40]}")
+    else:
+        for ref, members in groups.items():
+            haveext = [m for m in members if m["id"] in extset]
+            noext = [m for m in members if m["id"] not in extset]
+            if not noext:
+                skip_allext.append(ref)               # both have ext id
+                continue
+            if not haveext:
+                skip_noext.append(ref)                 # none have ext id
+                continue
+            for m in noext:
+                if m["id"] in soset:
+                    skip_sales.append((ref, m["id"], m["name"]))
+                else:
+                    to_archive.append((ref, m["id"], m["name"]))
+        print(f"duplicate groups: {len(groups)}")
+        print(f"records to archive (no ext id): {len(to_archive)}")
+        print(f"left as-is: both-have-extid groups={len(skip_allext)}, "
+              f"no-extid-at-all groups={len(skip_noext)}, "
+              f"sales-history records kept={len(skip_sales)}")
+        for ref, rid, nm in skip_sales:
+            print(f"  KEPT (has sales) {ref} id={rid} {nm[:40]}")
 
     if args.dry_run:
         for ref, rid, nm in to_archive[:25]:
