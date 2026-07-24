@@ -64,10 +64,11 @@ def rows_from(path):
 
 
 def build_values(r, public_categ_id):
+    """Identity/price/category fields. Description handled separately so we can
+    preserve an existing one; specs are never written (kept as-is)."""
     vals = {
         "name": clean(r[2]),
         "default_code": clean(r[1]),
-        DESC_FIELD: clean(r[2]),              # description = name (per instruction)
         "is_storable": True,
         "website_published": True,            # publish always true
         "categ_id": GOODS_CATEG_ID,
@@ -84,6 +85,15 @@ def build_values(r, public_categ_id):
     return vals
 
 
+def category_cache(c, rows):
+    """Resolve each distinct col6 category ext-id to a public category res_id."""
+    ext = sorted({clean(r[6]) for r in rows if r[6] is not None})
+    imd = c._execute_kw("ir.model.data", "search_read",
+        [[["model", "=", "product.public.category"], ["name", "in", ext]]],
+        {"fields": ["name", "res_id"]})
+    return {d["name"]: d["res_id"] for d in imd}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True)
@@ -94,13 +104,8 @@ def main():
 
     c = OdooClient(); c.authenticate()
 
-    # resolve eCommerce category ext id "1051" -> product.public.category
-    pubcat = c._execute_kw("ir.model.data", "search_read",
-        [[["model", "=", "product.public.category"], ["name", "=", "1051"]]],
-        {"fields": ["res_id"]})
-    public_categ_id = pubcat[0]["res_id"] if pubcat else None
-
     rows = rows_from(args.file)
+    catcache = category_cache(c, rows)
     # skip discontinued, de-dupe by external id (keep first)
     seen, plan = set(), []
     skipped_disc = dups = 0
@@ -120,15 +125,23 @@ def main():
         [[["model", "=", "product.template"], ["name", "in", ext_ids]]],
         {"fields": ["name", "res_id"]})
     ext_to_res = {d["name"]: d["res_id"] for d in imd}
-    states = {p["id"]: p["active"] for p in c._execute_kw("product.template", "search_read",
+    # existing state + whether they already have a description (preserve it)
+    existing = c._execute_kw("product.template", "search_read",
         [["&", ["id", "in", list(ext_to_res.values())],
-          "|", ["active", "=", True], ["active", "=", False]]], {"fields": ["id", "active"]})}
+          "|", ["active", "=", True], ["active", "=", False]]],
+        {"fields": ["id", "active", DESC_FIELD]})
+    states = {p["id"]: p["active"] for p in existing}
+    has_desc = {p["id"]: bool(p[DESC_FIELD]) for p in existing}
 
     n_unarch = n_update = n_create = 0
     img_ok = img_fail = 0
     for r in plan:
         ext = clean(r[0])
-        vals = build_values(r, public_categ_id)
+        vals = build_values(r, catcache.get(clean(r[6])))
+        res = ext_to_res.get(ext)
+        # description = name ONLY when the product has none (never clobber)
+        if not (res and res in has_desc and has_desc[res]):
+            vals[DESC_FIELD] = clean(r[2])
         if args.apply and clean(r[18]):
             img = fetch_image_b64(clean(r[18]))
             if img:
@@ -137,7 +150,6 @@ def main():
             else:
                 img_fail += 1
                 print(f"  ! image fetch failed for {ext}")
-        res = ext_to_res.get(ext)
         if res and res in states:
             archived = not states[res]
             action = "UNARCHIVE+update" if archived else "update"
@@ -165,7 +177,7 @@ def main():
     print(f"\nrows: {len(rows)} | discontinued skipped: {skipped_disc} | "
           f"duplicate rows skipped: {dups}")
     print(f"plan: unarchive={n_unarch}  update={n_update}  create={n_create}  "
-          f"(category -> public {public_categ_id})")
+          f"({len(catcache)} categories resolved)")
     if args.apply:
         print(f"images: {img_ok} attached, {img_fail} failed")
     if args.dry_run:
