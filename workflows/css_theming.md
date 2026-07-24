@@ -53,6 +53,8 @@ c.write("website", [site_id], {"custom_code_head": new_head})
 
 > **Contrast (Orchid theme combos):** `o_cc1` white, `o_cc2` `#f0f2f5`, `o_cc3` tan `#e0ccaf`, `o_cc4` blue `#0A58CA`, `o_cc5` navy `#141f2e`. The `sections` block forces light text on `o_cc4`/`o_cc5`; because Bootstrap's `.card` white bg beats Odoo's `o_cc` bg, cards carrying those combos also get an explicit navy/blue background so text stays legible. Avoid a blanket `#wrapwrap { color }` that fights the theme's per-combo text colors.
 
+> **Card sub-description hidden (2026-07-24):** `description_sale` now equals the product name, so the shop block hides `.oe_subdescription`/`.o_wsale_product_sub` on `.o_website_sale_products` to avoid a doubled title on category cards.
+
 > **Shop selectors (saas~19.2, verified 2026-07-22):** cards `.oe_product .oe_product_cart`; title `.o_wsale_products_item_title`; sub/SKU `.oe_subdescription` / `.o_wsale_product_sub`; price `.oe_currency_value`; buttons `.o_wsale_product_btn .btn`, `#add_to_cart`; search `.o_searchbar_form`; ribbon `.o_ribbon`. Listing body `o_website_sale_products`, detail body `o_website_sale_product`. **Cart/checkout/portal NOT yet themed** — see checklist in new-odoo-project SKILL.md.
 
 ---
