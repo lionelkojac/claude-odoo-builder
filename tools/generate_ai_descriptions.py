@@ -27,6 +27,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -66,10 +67,17 @@ SYSTEM = (
     "You write short factual product descriptions for a Dutch marine/offshore "
     "electrotechnical wholesaler's B2B webshop. Tone: formal, technical, plain. "
     "Rules: 2-4 sentences per product. Use ONLY the specifications given for "
-    "that product; never invent voltages, dimensions, materials, or codes. No "
-    "emoji, no marketing hype, no markdown, no citations or URLs. Write in "
-    "English. Describe what the item is and its stated specs in a natural way."
+    "that product; never invent voltages, dimensions, materials, or codes. "
+    "NEVER include a website link, URL, domain name, or citation of any kind. "
+    "NEVER name another shop, retailer, marketplace, or competitor. You may "
+    "name the product's own manufacturer only if it appears in the product "
+    "name. No emoji, no marketing hype, no markdown. Write in English. "
+    "Describe what the item is and its stated specs in a natural way."
 )
+
+# used to detect (and refuse to keep) any link/citation/URL token
+LINK_RE = re.compile(r"https?://|www\.|\]\(|\[[^\]]+\]\(|\b\w[\w-]*\.(?:com|net|"
+                     r"org|nl|be|de|au|eu)\b|shipserv", re.I)
 
 
 def needs_desc(r):
@@ -119,7 +127,18 @@ def call_claude(client, recs):
             text = text[4:]
         text = text.strip().rstrip("`").strip()
     data = json.loads(text)
-    return {str(d["code"]): d["description"].strip() for d in data}
+    return {str(d["code"]): scrub_links(d["description"].strip()) for d in data}
+
+
+def scrub_links(text):
+    """Belt-and-braces: drop any markdown citation/URL the model still emits,
+    then tidy leftover whitespace/orphan punctuation. Descriptions must never
+    contain a link."""
+    text = re.sub(r"\s*\(\[[^\]]*\]\([^)]*\)\)", "", text)   # ([label](url))
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)      # [label](url)
+    text = re.sub(r"https?://\S+|www\.\S+", "", text)          # bare urls
+    text = re.sub(r"\s+([.,;:])", r"\1", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def main():
@@ -128,6 +147,9 @@ def main():
                     help="max products to process (0 = all)")
     ap.add_argument("--category", type=int, default=0,
                     help="restrict to a public category id")
+    ap.add_argument("--relink", action="store_true",
+                    help="regenerate ONLY descriptions that contain a link/url "
+                         "(overwrites them, even if otherwise 'real')")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true")
     g.add_argument("--apply", action="store_true")
@@ -141,10 +163,15 @@ def main():
         domain = [[["public_categ_ids", "in", [args.category]]]]
     recs = c._execute_kw("product.template", "search_read", domain,
                          {"fields": READ_FIELDS})
-    todo = [r for r in recs if needs_desc(r)]
+    if args.relink:
+        todo = [r for r in recs if LINK_RE.search(r.get(DESC_FIELD) or "")]
+        selkind = "contain a link"
+    else:
+        todo = [r for r in recs if needs_desc(r)]
+        selkind = "need a description"
     if args.limit:
         todo = todo[:args.limit]
-    print(f"{len(recs)} scanned | {len(todo)} need a description"
+    print(f"{len(recs)} scanned | {len(todo)} {selkind}"
           f"{f' (limited to {args.limit})' if args.limit else ''}")
     if not todo:
         return
@@ -169,6 +196,11 @@ def main():
             if args.dry_run:
                 print(f"\n[{code}] {r.get('name','')}")
                 print("   ", desc)
+            elif args.relink:
+                # relink mode intentionally overwrites the link-laden text
+                c._execute_kw("product.template", "write",
+                              [[r["id"]], {DESC_FIELD: desc}], {})
+                written += 1
             else:
                 # re-guard: never clobber a real description written meanwhile
                 cur = c._execute_kw("product.template", "read",
