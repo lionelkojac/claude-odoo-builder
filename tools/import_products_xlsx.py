@@ -22,10 +22,12 @@ Usage:
 """
 
 import argparse
+import base64
 import os
 import sys
 
 import openpyxl
+import requests
 
 sys.path.insert(0, os.path.dirname(__file__))
 from odoo_client import OdooClient
@@ -36,6 +38,18 @@ DESC_FIELD = "x_studio_description_long"
 
 def clean(v):
     return None if v is None else str(v).strip()
+
+
+def fetch_image_b64(url):
+    """Download an image URL and return base64 (for image_1920), or None."""
+    try:
+        r = requests.get(url, timeout=60)
+        r.raise_for_status()
+        if not r.headers.get("content-type", "").startswith("image"):
+            return None
+        return base64.b64encode(r.content).decode()
+    except Exception:
+        return None
 
 
 def rows_from(path):
@@ -111,9 +125,18 @@ def main():
           "|", ["active", "=", True], ["active", "=", False]]], {"fields": ["id", "active"]})}
 
     n_unarch = n_update = n_create = 0
+    img_ok = img_fail = 0
     for r in plan:
         ext = clean(r[0])
         vals = build_values(r, public_categ_id)
+        if args.apply and clean(r[18]):
+            img = fetch_image_b64(clean(r[18]))
+            if img:
+                vals["image_1920"] = img
+                img_ok += 1
+            else:
+                img_fail += 1
+                print(f"  ! image fetch failed for {ext}")
         res = ext_to_res.get(ext)
         if res and res in states:
             archived = not states[res]
@@ -135,13 +158,16 @@ def main():
                     "module": "__import__", "name": ext,
                     "model": "product.template", "res_id": new_id}], {})
         if args.dry_run:
-            print(f"  {ext:<8} {action:<16} {vals['name'][:36]:<36} "
-                  f"price={vals.get('list_price','-')}")
+            has_img = "img" if clean(r[18]) else "—"
+            print(f"  {ext:<8} {action:<16} {vals['name'][:34]:<34} "
+                  f"price={vals.get('list_price','-')!s:<7} {has_img}")
 
     print(f"\nrows: {len(rows)} | discontinued skipped: {skipped_disc} | "
           f"duplicate rows skipped: {dups}")
     print(f"plan: unarchive={n_unarch}  update={n_update}  create={n_create}  "
           f"(category -> public {public_categ_id})")
+    if args.apply:
+        print(f"images: {img_ok} attached, {img_fail} failed")
     if args.dry_run:
         print("\n(dry-run — nothing written. Images NOT included; spec/search/stock "
               "columns intentionally skipped.)")
