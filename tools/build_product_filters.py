@@ -23,8 +23,10 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from odoo_client import OdooClient
 
-# eCommerce "Lamps" category tree (public categories)
-LAMP_CATEGORIES = [1341, 1398, 1395, 1409]
+# eCommerce lamp/lighting category tree (public categories).
+# 1397 "LED lighting" added — LED products carry the same socket/voltage/etc.
+# Studio specs and belong under the shop filters too.
+LAMP_CATEGORIES = [1341, 1398, 1395, 1409, 1397]
 
 WATT_BUCKETS = [
     (0, 2, "≤2 W"), (2, 5, "3–5 W"), (5, 15, "6–15 W"),
@@ -46,8 +48,14 @@ def bucket_watt(raw):
 
 
 def exact(raw):
+    # Odoo returns False for an empty Studio field; str(False) -> "False",
+    # so guard against falsy/placeholder values to avoid junk filter labels.
+    if raw in (False, None, "", 0):
+        return None
     s = str(raw).strip()
-    return s or None
+    if not s or s.lower() in ("false", "none", "0"):
+        return None
+    return s
 
 
 # Nominal voltage groups: explicit ranges honour the requested buckets exactly;
@@ -76,10 +84,27 @@ def bucket_voltage(raw):
 
 
 def kelvin(raw):
+    # Color-temperature field mixes real Kelvin values ("3000", "3000 K") with
+    # LED colour names ("Red"). Only numeric values are colour temperatures;
+    # normalise to a single "N K" (never "K K"). Colour names -> colour().
+    if raw in (False, None, "", 0):
+        return None
+    import re as _re
+    m = _re.search(r"\d+", str(raw))
+    if not m:
+        return None
+    return f"{m.group()} K"
+
+
+_COLOURS = {"red", "green", "blue", "white", "yellow", "amber", "orange"}
+
+
+def colour(raw):
+    # The same field carries an LED's emitted colour for indicator lamps.
     if raw in (False, None, "", 0):
         return None
     s = str(raw).strip()
-    return f"{s} K" if s and s not in ("0", "False") else None
+    return s.capitalize() if s.lower() in _COLOURS else None
 
 
 # Each: attribute name, source Studio field, and how to derive the value label.
@@ -88,6 +113,7 @@ ATTRS = [
     {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage},
     {"name": "Wattage", "field": "x_studio_wattage_w", "fn": bucket_watt},
     {"name": "Color Temperature", "field": "x_studio_color_temperature", "fn": kelvin},
+    {"name": "Colour", "field": "x_studio_color_temperature", "fn": colour},
     # Lumen: add here once the field exists, e.g.
     # {"name": "Lumen", "field": "x_studio_lumen", "fn": bucket_lumen},
 ]
