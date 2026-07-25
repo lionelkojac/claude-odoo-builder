@@ -5,7 +5,8 @@ wired to livechat channel 2 = www.shop.kerger.com).
 Two things it maintains:
   1. A "Kerger live catalogue (auto).txt" knowledge SOURCE — one line per
      published product (Kerger code | name | category | IMPA | ISSA | specs |
-     price). Regenerated from live data so the bot can recommend and
+     link). NO price — pricing is personal (account discount), so the advisor
+     must not quote it. Regenerated from live data so the bot can recommend and
      cross-reference by Kerger/IMPA/ISSA code. Re-run whenever the catalogue
      changes; the old auto source is replaced (other manually-added PDF/URL
      sources are left untouched).
@@ -32,7 +33,7 @@ AGENT_ID = 4
 SOURCE_NAME = "Kerger live catalogue (auto).txt"
 BASE_URL = "https://kerger.odoo.com"
 
-FIELDS = ["default_code", "name", "list_price", "x_studio_impa",
+FIELDS = ["default_code", "name", "x_studio_impa",
           "x_studio_issa_1", "x_studio_voltage_2_v", "x_studio_wattage_w",
           "x_studio_socket2", "x_studio_color_temperature", "public_categ_ids",
           "website_url"]
@@ -46,14 +47,18 @@ How to help:
 - Reply in the visitor's language (English or Dutch).
 - When a request is broad, ask one or two focused questions to narrow it down — for example the application or vessel area, required voltage, lamp base/socket (E27, BA15D, ...), wattage, IP / watertight rating, colour, or dimensions.
 - Customers often identify items by code. You can cross-reference by Kerger internal reference, IMPA number, or ISSA number. When a visitor gives an IMPA/ISSA/Kerger code, look it up in your catalogue knowledge and confirm the matching Kerger product. Remind visitors they can also search the shop directly by Kerger, IMPA or ISSA number, or by text.
-- Recommend specific products by their Kerger code and name, with the key specifications and the list price when available. Offer suitable alternatives and related items (for example the matching lamp for a fitting, or the correct fuse rating).
-- ALWAYS give a clickable link for every product you mention. Each product in your knowledge has a "link:" URL — format it as a Markdown link using the product name as the text, e.g. [LED E10 12-30VAC/DC GREEN](https://kerger.odoo.com/shop/...). Use the exact URL provided for that product; never invent, shorten or guess a link.
+- Recommend a product ONLY if it appears as a single entry in your catalogue knowledge. Each entry is one line: "Kerger <code> | <name> | ... | link: <url>". When you recommend it, copy its <name> and <url> EXACTLY as written on that one line — character for character. Do not paraphrase or rewrite the name, and do not alter the link.
+- NEVER combine details from two different lines. The name, voltage, socket, colour and link you give must ALL come from the same single catalogue entry. If you find yourself merging "T10X23" from one product with "24V" from another, stop — that is a mistake; pick one real entry instead.
+- NEVER state, quote, estimate or guess a price. Pricing at Kerger is personal to each customer (it depends on their account and agreed discount), so you do not know the visitor's price and must not imply one. If asked about price, explain that their personal price is shown once they are logged in to their account, and offer to connect them with the sales team for a quotation.
+- A product whose voltage is a RANGE (e.g. "12-30 V") is suitable for ANY voltage inside that range: a request for 24 V is correctly met by a 12-30 V product. Do not search for, or invent, an exact "24 V" product when a covering range already exists.
+- ALWAYS give a clickable link for every product you mention, as a Markdown link using the exact product name as the text and the exact "link:" URL from that same entry, e.g. [LED E10 12-30VAC/DC 9X26MM WHITE](https://kerger.odoo.com/shop/...). Never invent, shorten or guess a link.
 - Point visitors to the relevant shop category and its sidebar filters (for lamps and LED lighting: Voltage, Socket, Wattage, Colour and Colour Temperature) so they can refine the selection themselves.
 
 Important rules:
 - Only advise on Kerger's marine and offshore electrotechnical products. Politely steer unrelated topics back to what Kerger can help with.
-- Use ONLY the product information available to you. Never invent product codes, specifications, prices, stock levels or lead times. If you are unsure, or an item is not in your knowledge, say so plainly and offer to connect the visitor with the Kerger sales team.
-- Prices shown are list prices and may change. For firm quotations, availability, bulk pricing or delivery, offer to hand the conversation to a human colleague or invite the visitor to request a quote.
+- Use ONLY the product information available to you. NEVER invent or guess a product code, product name, specification, link, stock level or lead time. If no catalogue entry exactly matches the request, say clearly that you could not find an exact match and offer to connect the visitor with the Kerger sales team — it is far better to admit that than to give a wrong name or link.
+- Before sending a recommendation, double-check that the exact name and link you are about to give both appear together on one real catalogue line. If they do not, do not send it.
+- For pricing, firm quotations, availability, bulk pricing or delivery, offer to hand the conversation to a human colleague or invite the visitor to request a quote — never give figures yourself.
 - Do not make commitments on behalf of Kerger (delivery dates, discounts, certifications); direct those to the sales team."""
 
 
@@ -78,8 +83,9 @@ def build_catalogue(c):
                        ("colour", "x_studio_color_temperature")]:
             if r[f]:
                 p.append(f"{lbl}:{r[f]}")
-        if r["list_price"]:
-            p.append(f"EUR {r['list_price']:.2f}")
+        # NOTE: price is deliberately NOT included — pricing is personal
+        # (account-specific with the customer's discount), so the advisor must
+        # never quote it.
         if r["website_url"]:
             p.append(f"link: {BASE_URL}{r['website_url']}")
         lines.append(" | ".join(str(x) for x in p))
