@@ -112,10 +112,14 @@ def colour(raw):
     return s.capitalize() if s.lower() in _COLOURS else None
 
 
-# Each: attribute name, source Studio field, and how to derive the value label.
+# Each: attribute name, source Studio field, how to derive the value label, and
+# whether it's filter-only. Voltage is filter-only (hidden): a range gets
+# several buckets (12V + 24–28V), which as VISIBLE radios would look like the
+# product comes in two "types". Hidden = still filters, not shown on the page.
 ATTRS = [
     {"name": "Socket", "field": "x_studio_socket2", "fn": exact},
-    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage},
+    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage,
+     "hidden": True},
     {"name": "Wattage", "field": "x_studio_wattage_w", "fn": bucket_watt},
     {"name": "Color Temperature", "field": "x_studio_color_temperature", "fn": kelvin},
     {"name": "Colour", "field": "x_studio_color_temperature", "fn": colour},
@@ -124,18 +128,22 @@ ATTRS = [
 ]
 
 
-def get_or_create_attribute(c, name, dry):
+def get_or_create_attribute(c, name, dry, hidden=False):
+    vis = "hidden" if hidden else "visible"
     found = c._execute_kw("product.attribute", "search_read",
-                          [[["name", "=", name]]], {"fields": ["id"]})
+                          [[["name", "=", name]]], {"fields": ["id", "visibility"]})
     if found:
+        if not dry and found[0]["visibility"] != vis:
+            c._execute_kw("product.attribute", "write",
+                          [[found[0]["id"]], {"visibility": vis}], {})
         return found[0]["id"]
     if dry:
         return None
     return c._execute_kw("product.attribute", "create", [{
         "name": name,
         "create_variant": "no_variant",   # critical: no product variants
+        "visibility": vis,
         "display_type": "radio",
-        "visibility": "visible",
     }], {})
 
 
@@ -174,7 +182,8 @@ def main():
 
     vcache = {}
     for a in attrs:
-        attr_id = get_or_create_attribute(c, a["name"], args.dry_run)
+        attr_id = get_or_create_attribute(c, a["name"], args.dry_run,
+                                          a.get("hidden", False))
         # existing lines with their current value set (to reconcile, not skip —
         # so a re-run can add newly-parsed specs and extra voltage buckets)
         line_of = {}
