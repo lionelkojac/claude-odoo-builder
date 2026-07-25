@@ -112,14 +112,16 @@ def colour(raw):
     return s.capitalize() if s.lower() in _COLOURS else None
 
 
-# Each: attribute name, source Studio field, how to derive the value label, and
-# whether it's filter-only. Voltage is filter-only (hidden): a range gets
-# several buckets (12V + 24–28V), which as VISIBLE radios would look like the
-# product comes in two "types". Hidden = still filters, not shown on the page.
+# Each: attribute name, source Studio field, how to derive the value label.
+# NOTE Voltage stays VISIBLE (needed for the shop-listing filter). A range
+# gets several buckets (12V + 24–28V); on the PRODUCT PAGE those would render
+# as multiple radios (looking like two "types"), so the product-page selector
+# is hidden with CSS (block 'hide_voltage_selector', .tmp/hide_voltage.css) —
+# which targets li[name="variant_attribute"], not the listing filter markup.
+# (visibility='hidden' is NOT usable: it removes the sidebar filter entirely.)
 ATTRS = [
     {"name": "Socket", "field": "x_studio_socket2", "fn": exact},
-    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage,
-     "hidden": True},
+    {"name": "Voltage", "field": "x_studio_voltage_2_v", "fn": bucket_voltage},
     {"name": "Wattage", "field": "x_studio_wattage_w", "fn": bucket_watt},
     {"name": "Color Temperature", "field": "x_studio_color_temperature", "fn": kelvin},
     {"name": "Colour", "field": "x_studio_color_temperature", "fn": colour},
