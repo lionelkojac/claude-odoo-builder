@@ -163,6 +163,23 @@ def contact_config(name):
     return re.sub(r"\s", "", m.group(1)).replace("/", "+")
 
 
+def capacity_ah(name):
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s?AH\b", name, re.I)
+    if not m:
+        return None
+    val = m.group(1).replace(",", ".")
+    return f"{val} Ah" if float(val) > 0 else None   # guard "2O0AH" typo -> 0
+
+
+def lead_type(name):
+    u = name.upper()
+    if "AGM" in u:
+        return "AGM"
+    if "GEL" in u:
+        return "Gel"
+    return None
+
+
 def capacitance_uf(name):
     m = re.search(r"(\d+(?:[.,]\d+)?)\s?[UµM]F\b", name, re.I)
     return f"{m.group(1).replace(',', '.')} µF" if m else None
@@ -207,6 +224,14 @@ CATEGORIES = {
             {"name": "Fuse type", "fn": fuse_type},
             {"name": "Fuse size", "fn": fuse_size},
             {"name": "Fuse speed/class", "fn": fuse_speed},
+        ],
+    },
+    "Lead-acid batteries": {
+        "category_ids": [1399],
+        "attributes": [
+            {"name": "Voltage", "fn": _voltage},
+            {"name": "Capacity (Ah)", "fn": capacity_ah, "numeric": True},
+            {"name": "Battery type", "fn": lead_type},
         ],
     },
     "Relays and contactors": {
