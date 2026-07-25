@@ -58,29 +58,34 @@ def exact(raw):
     return s
 
 
-# Nominal voltage groups: explicit ranges honour the requested buckets exactly;
-# anything outside them snaps to the nearest nominal ("really close = same").
-_V_ANCHORS = [(6, "6V"), (12, "12V"), (26, "24–28V"), (48, "48V"),
-              (60, "60V"), (110, "110V"), (220, "220V"), (380, "380V"), (440, "440V")]
+# Nominal voltage buckets, each with the numeric band it covers. A product
+# voltage RANGE is tagged with every bucket its band overlaps, so a "12-30 V"
+# item shows up under 12V and 24–28V; a universal "100-240 V" under 110V and
+# 220V. A single value falls in its band, else snaps to the nearest nominal.
+_V_BUCKETS = [("6V", 6, 6), ("12V", 12, 12), ("24–28V", 24, 28), ("48V", 48, 48),
+              ("60V", 60, 60), ("110V", 100, 130), ("220V", 200, 245),
+              ("380V", 380, 380), ("440V", 440, 440)]
 
 
 def bucket_voltage(raw):
+    """Return a LIST of nominal voltage buckets for this value (or None)."""
     import re as _re
     nums = [int(n) for n in _re.findall(r"\d+", str(raw))]
     if not nums:
         return None
-    n = nums[0]
-    if n == 6:                      return "6V"
-    if n == 12:                     return "12V"
-    if 24 <= n <= 28:               return "24–28V"
-    if n == 48:                     return "48V"
-    if n == 60:                     return "60V"
-    if 100 <= n <= 130:             return "110V"
-    if 200 <= n <= 245:             return "220V"
-    if n == 380:                    return "380V"
-    if n == 440:                    return "440V"
-    # straggler → nearest nominal
-    return min(_V_ANCHORS, key=lambda a: abs(a[0] - n))[1]
+    lo, hi = min(nums), max(nums)
+    if lo == hi:                                   # single value
+        inside = [lbl for lbl, blo, bhi in _V_BUCKETS if blo <= lo <= bhi]
+        if inside:
+            return inside
+        mid = lambda b: (b[1] + b[2]) / 2
+        return [min(_V_BUCKETS, key=lambda b: abs(mid(b) - lo))[0]]
+    # range: every bucket whose band overlaps [lo, hi]
+    out = [lbl for lbl, blo, bhi in _V_BUCKETS if blo <= hi and bhi >= lo]
+    if not out:                                    # range between bands
+        mid = (lo + hi) / 2
+        out = [min(_V_BUCKETS, key=lambda b: abs((b[1] + b[2]) / 2 - mid))[0]]
+    return out
 
 
 def kelvin(raw):
@@ -170,33 +175,43 @@ def main():
     vcache = {}
     for a in attrs:
         attr_id = get_or_create_attribute(c, a["name"], args.dry_run)
-        # products already carrying this attribute (idempotency)
-        existing = set()
+        # existing lines with their current value set (to reconcile, not skip —
+        # so a re-run can add newly-parsed specs and extra voltage buckets)
+        line_of = {}
         if attr_id:
             lines = c._execute_kw("product.template.attribute.line", "search_read",
                                   [[["attribute_id", "=", attr_id]]],
-                                  {"fields": ["product_tmpl_id"]})
-            existing = {l["product_tmpl_id"][0] for l in lines}
+                                  {"fields": ["id", "product_tmpl_id", "value_ids"]})
+            line_of = {l["product_tmpl_id"][0]: (l["id"], set(l["value_ids"]))
+                       for l in lines}
 
-        added = 0
+        created = updated = 0
         for p in prods:
-            if p["id"] in existing:
+            labels = a["fn"](p.get(a["field"]))
+            if not labels:
                 continue
-            label = a["fn"](p.get(a["field"]))
-            if not label:
-                continue
+            if isinstance(labels, str):
+                labels = [labels]
             if args.dry_run:
-                added += 1
+                if p["id"] not in line_of:
+                    created += 1
                 continue
-            vid = get_or_create_value(c, vcache, attr_id, label, False)
-            c._execute_kw("product.template.attribute.line", "create", [{
-                "product_tmpl_id": p["id"],
-                "attribute_id": attr_id,
-                "value_ids": [(6, 0, [vid])],
-            }], {})
-            added += 1
-        verb = "would link" if args.dry_run else "linked"
-        print(f"  {a['name']}: {verb} {added} product(s)")
+            want = {get_or_create_value(c, vcache, attr_id, lbl, False)
+                    for lbl in labels}
+            if p["id"] not in line_of:
+                c._execute_kw("product.template.attribute.line", "create", [{
+                    "product_tmpl_id": p["id"], "attribute_id": attr_id,
+                    "value_ids": [(6, 0, list(want))]}], {})
+                created += 1
+            else:
+                line_id, have = line_of[p["id"]]
+                if want != have:
+                    c._execute_kw("product.template.attribute.line", "write",
+                                  [[line_id], {"value_ids": [(6, 0, list(want))]}], {})
+                    updated += 1
+        verb = "would create" if args.dry_run else "created"
+        print(f"  {a['name']}: {verb} {created}" +
+              ("" if args.dry_run else f", updated {updated}") + " line(s)")
 
 
 if __name__ == "__main__":
