@@ -92,6 +92,10 @@ def main():
                 n += 1; continue
             vid = get_or_create_value(c, vcache, attr, d["brand"], False)
             pid = byc[d["kerger"]]["id"]
+            # also store Brand as a spec FIELD (shown on the product page); the
+            # attribute stays for filtering, its on-page selector hidden via CSS.
+            c._execute_kw("product.template", "write",
+                          [[pid], {"x_studio_brand": d["brand"]}], {})
             if pid not in lines:
                 c._execute_kw("product.template.attribute.line", "create", [{
                     "product_tmpl_id": pid, "attribute_id": attr,
