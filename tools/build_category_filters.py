@@ -22,7 +22,40 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from odoo_client import OdooClient
-from build_product_filters import get_or_create_attribute, get_or_create_value
+from build_product_filters import (get_or_create_attribute, get_or_create_value,
+                                   bucket_voltage)
+
+
+def control_voltage(name):
+    # only bucket a REAL voltage (digits followed by V) — avoids reading part
+    # numbers like ZB4-BA6 / XB4BA31 as volts.
+    v = _voltage(name)
+    return bucket_voltage(v) if v else None
+
+
+def colour_name(name):
+    u = name.upper()
+    if re.search(r"\bBLUE\b", u):
+        return "Blue"
+    if re.search(r"\bBLACK\b", u) or re.search(r"\bBL\b", u):
+        return "Black"
+    if re.search(r"\bGREEN\b", u):
+        return "Green"
+    if re.search(r"\bRED\b", u):
+        return "Red"
+    if re.search(r"\bYELLOW\b", u):
+        return "Yellow"
+    if re.search(r"\bWHITE\b", u):
+        return "White"
+    if re.search(r"\b(GREY|GRAY)\b", u):
+        return "Grey"
+    if re.search(r"\bORANGE\b", u):
+        return "Orange"
+    if re.search(r"\bAMBER\b", u):
+        return "Amber"
+    if re.search(r"\bCLEAR\b", u):
+        return "Clear"
+    return None
 
 
 # ---------------- battery parsers ----------------
@@ -224,6 +257,16 @@ CATEGORIES = {
             {"name": "Fuse type", "fn": fuse_type},
             {"name": "Fuse size", "fn": fuse_size},
             {"name": "Fuse speed/class", "fn": fuse_speed},
+        ],
+    },
+    "Control units": {
+        # push buttons, selector switches, pilot/indicator lights — currently
+        # spread across Wiring accessories (1407) and Pilot lamps (1409).
+        "category_ids": [1407, 1409],
+        "attributes": [
+            {"name": "Colour", "fn": colour_name},
+            {"name": "Voltage", "fn": control_voltage},
+            {"name": "Contact configuration", "fn": contact_config},
         ],
     },
     "Lead-acid batteries": {
