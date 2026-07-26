@@ -59,6 +59,14 @@ def resolve_code_fields(client):
     return resolved
 
 
+def _searchable(val):
+    """The value plus a punctuation-stripped variant, so the code is found with
+    or without dots/dashes/spaces (LC1-D95P7 <-> LC1D95P7, 3SE5112-0CD02 <->
+    3SE51120CD02). The stripped form is appended only when it differs."""
+    stripped = re.sub(r"[^A-Za-z0-9]", "", val)
+    return f"{val} {stripped}" if stripped and stripped != val else val
+
+
 def desired_description(current, codes):
     """Return description with the search marker set to `codes` (or removed).
 
@@ -66,7 +74,7 @@ def desired_description(current, codes):
     """
     base = MARKER_RE.sub("", current or "").strip()
     if codes:
-        inner = " ".join(f"{label}: {val}" for label, val in codes)
+        inner = " ".join(f"{label}: {_searchable(val)}" for label, val in codes)
         block = f'<p class="o_impa_search">{inner}</p>'
         return (base + block) if base else block
     return base or False
