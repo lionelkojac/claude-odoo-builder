@@ -34,6 +34,40 @@ XLSX = ".tmp/control_data.xlsx"
 BRAND_ATTR_NAME = "Brand"
 
 
+# Eaton PKZM0 motor protectors: the file often carries only the catalog/order
+# number (they order under it) not the type. Verified catalog -> type
+# (PKZM0-<max current>), cross-checked to the current range in each product name
+# and to eaton.com (072730 = PKZM0-0,16).
+EATON_CATALOG_TYPE = {
+    "72730": "PKZM0-0,16", "72731": "PKZM0-0,25", "72732": "PKZM0-0,4",
+    "72733": "PKZM0-0,63", "72734": "PKZM0-1", "72735": "PKZM0-1,6",
+    "72736": "PKZM0-2,5", "72737": "PKZM0-4", "72738": "PKZM0-6,3",
+}
+
+
+def catalog_number(raw):
+    """The plain order/catalog number token (digits + optional trailing letter)."""
+    for t in str(raw or "").split():
+        if re.fullmatch(r"\d+[A-Za-z]?", t.strip()):
+            return t.strip()
+    return ""
+
+
+def type_field(brand, raw):
+    """Value for the Manufacturer code field. For Eaton, combine the real type
+    with the catalog number they order under: 'PKZM0-0,16 (72730)'. Others just
+    use the type."""
+    typ = mfr_code(raw)
+    if brand.lower() == "eaton":
+        cat = catalog_number(raw)
+        if not typ and cat in EATON_CATALOG_TYPE:
+            typ = EATON_CATALOG_TYPE[cat]
+        if typ and cat:
+            return f"{typ} ({cat})"
+        return typ or cat
+    return typ
+
+
 def mfr_code(raw):
     """Extract the manufacturer TYPE from the 'Leveranciers code' cell, which
     is formatted differently per brand:
@@ -65,6 +99,7 @@ def load_rows():
             "brand": str(r[2]).strip() if r[2] else "",
             "img": str(r[3]).strip() if r[3] and str(r[3]).startswith("http") else "",
             "mfr": mfr_code(r[4]),
+            "type_val": type_field(str(r[2]).strip() if r[2] else "", r[4]),
         })
     return out
 
@@ -120,7 +155,7 @@ def main():
             # from an earlier run is corrected.
             c._execute_kw("product.template", "write", [[pid], {
                 "x_studio_brand": d["brand"],
-                "x_studio_manufacturer_code": d.get("mfr") or False}], {})
+                "x_studio_manufacturer_code": d.get("type_val") or False}], {})
             if pid not in lines:
                 c._execute_kw("product.template.attribute.line", "create", [{
                     "product_tmpl_id": pid, "attribute_id": attr,
