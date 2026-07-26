@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kerger product advisor</title>
+<style>
+  :root{
+    --blue:#00B9F2; --orange:#FF5B1E; --navy:#0B2942; --ink:#0B1B26;
+    --line:#E2E9EE; --bg:#F4F7F9; --bot:#FFFFFF; --user:#00B9F2;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:Inter,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:var(--ink); background:var(--bg);
+    display:flex; align-items:stretch; justify-content:center;
+  }
+  .chat{
+    display:flex; flex-direction:column; width:100%; max-width:520px;
+    height:100%; background:#fff; border-left:1px solid var(--line);
+    border-right:1px solid var(--line);
+  }
+  header{
+    background:var(--navy); color:#fff; padding:16px 20px;
+    display:flex; align-items:center; gap:12px; flex:0 0 auto;
+  }
+  header .dot{width:10px;height:10px;border-radius:50%;background:var(--blue)}
+  header h1{
+    font-family:Outfit,Inter,sans-serif; font-size:16px; font-weight:600;
+    margin:0; letter-spacing:.2px;
+  }
+  header .sub{font-size:12px;opacity:.7;margin-top:2px;font-weight:400}
+  header .bar{flex:1;min-width:0}
+  #log{flex:1 1 auto; overflow-y:auto; padding:20px; display:flex;
+    flex-direction:column; gap:14px; background:var(--bg)}
+  .msg{max-width:85%; padding:11px 14px; border-radius:12px; font-size:14px;
+    line-height:1.5; white-space:normal; word-wrap:break-word}
+  .msg.bot{background:var(--bot); border:1px solid var(--line);
+    border-radius:12px 12px 12px 4px; align-self:flex-start}
+  .msg.user{background:var(--user); color:#fff;
+    border-radius:12px 12px 4px 12px; align-self:flex-end}
+  .msg a{color:var(--orange); font-weight:600; text-decoration:none;
+    border-bottom:1px solid rgba(255,91,30,.35)}
+  .msg.bot p{margin:0 0 8px} .msg.bot p:last-child{margin:0}
+  .msg.bot ul{margin:6px 0;padding-left:18px} .msg.bot li{margin:2px 0}
+  .typing{align-self:flex-start;display:flex;gap:4px;padding:12px 14px;
+    background:var(--bot);border:1px solid var(--line);border-radius:12px}
+  .typing span{width:7px;height:7px;border-radius:50%;background:#9db2c0;
+    animation:b 1.2s infinite}
+  .typing span:nth-child(2){animation-delay:.2s}
+  .typing span:nth-child(3){animation-delay:.4s}
+  @keyframes b{0%,60%,100%{opacity:.3}30%{opacity:1}}
+  form{display:flex;gap:8px;padding:14px;border-top:1px solid var(--line);
+    background:#fff;flex:0 0 auto}
+  #q{flex:1;border:1px solid var(--line);border-radius:8px;padding:11px 13px;
+    font-size:14px;font-family:inherit;outline:none;color:var(--ink)}
+  #q:focus{border-color:var(--blue)}
+  button{background:var(--blue);color:#fff;border:0;border-radius:8px;
+    padding:0 18px;font-size:14px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  .hint{font-size:11px;color:#7d8f9b;text-align:center;padding:0 14px 10px;
+    background:#fff}
+</style>
+</head>
+<body>
+<div class="chat">
+  <header>
+    <span class="dot"></span>
+    <div class="bar">
+      <h1>Kerger product advisor</h1>
+      <div class="sub">Marine &amp; offshore electrotechnical supplies</div>
+    </div>
+  </header>
+  <div id="log"></div>
+  <form id="f">
+    <input id="q" autocomplete="off"
+           placeholder="Ask about a product, code or application…">
+    <button id="send" type="submit">Send</button>
+  </form>
+  <div class="hint">Prices are personal — log in to your account to see yours.</div>
+</div>
+
+<script>
+const log = document.getElementById('log');
+const form = document.getElementById('f');
+const input = document.getElementById('q');
+const send = document.getElementById('send');
+let sessionId = sessionStorage.getItem('kerger_sid') || '';
+
+// Minimal, safe Markdown: escape everything, then re-enable [text](url) links
+// and **bold**. No raw HTML from the model is ever inserted.
+function render(text){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const lines = text.split('\n');
+  let html = '', inList = false;
+  const inline = s => esc(s)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (m,t,u)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  for(let raw of lines){
+    const line = raw.trim();
+    const li = line.match(/^[-*]\s+(.*)/);
+    if(li){ if(!inList){html+='<ul>';inList=true;} html+=`<li>${inline(li[1])}</li>`; continue; }
+    if(inList){html+='</ul>';inList=false;}
+    if(line) html += `<p>${inline(line)}</p>`;
+  }
+  if(inList) html+='</ul>';
+  return html;
+}
+
+function add(role, text){
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.innerHTML = role === 'bot' ? render(text) : text.replace(/</g,'&lt;');
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+function typing(on){
+  let t = document.getElementById('typing');
+  if(on && !t){
+    t = document.createElement('div'); t.id='typing'; t.className='typing';
+    t.innerHTML='<span></span><span></span><span></span>';
+    log.appendChild(t); log.scrollTop = log.scrollHeight;
+  } else if(!on && t){ t.remove(); }
+}
+
+add('bot', "Welcome. I can help you find the right Kerger product — tell me what "
+  + "you're looking for, or give me a Kerger number, IMPA/ISSA code or "
+  + "manufacturer type.");
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = input.value.trim();
+  if(!msg) return;
+  add('user', msg);
+  input.value=''; input.disabled=true; send.disabled=true;
+  typing(true);
+  try{
+    const res = await fetch('/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId, message: msg})
+    });
+    const data = await res.json();
+    typing(false);
+    if(data.session_id){ sessionId = data.session_id;
+      sessionStorage.setItem('kerger_sid', sessionId); }
+    add('bot', data.reply || data.error || 'Sorry, something went wrong.');
+  }catch(err){
+    typing(false);
+    add('bot', 'Sorry, I could not reach the advisor. Please try again.');
+  }
+  input.disabled=false; send.disabled=false; input.focus();
+});
+input.focus();
+</script>
+</body>
+</html>
