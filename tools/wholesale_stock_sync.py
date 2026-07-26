@@ -1,34 +1,36 @@
 """
-Wholesale → Odoo stock sync (SCAFFOLD).
+Wholesale (Kerridge) -> Odoo stock sync, via ODBC.
 
-Pulls physical stock from the Wholesale REST API (`requestProductStock`),
-matches products to Odoo by Internal Reference (default_code), and adjusts
-Odoo on-hand quantity at a target location.
+Runs INSIDE the Wholesale/Citrix environment (that is the only place the DB
+`030309-016-AP01:11501` is reachable). It:
+  1. reads stock over ODBC  (SELECT code, qty  from lb-182 "Magazijnvoorraad"),
+  2. matches products to Odoo by Internal Reference (default_code = Kerger nr),
+  3. sets Odoo on-hand qty at a target location via an inventory adjustment,
+pushing to Odoo over plain HTTPS (443) — no file hand-off, no cloud provider.
 
-STATUS: scaffold. Two things must be resolved before it can apply:
-  1. Target Odoo products must be STORABLE (is_storable=True) — consumable
-     products cannot hold on-hand qty. All 460 products are currently non-storable.
-  2. Confirm the Wholesale request/response schema from the Swagger page — the
-     field names below (administrationCode, warehouseCode, productCodes,
-     stockOverview…) are placeholders from the ChatGPT draft, NOT verified.
+Configure everything in .env (never hard-code credentials):
+  # --- Odoo (already set for this project) ---
+  ODOO_URL=https://kerger.odoo.com
+  ODOO_DB=kerger
+  ODOO_USER=...
+  ODOO_PASSWORD=...
+  ODOO_STOCK_LOCATION_ID=14                 # HOU/Stock (target location)
+  # --- Wholesale ODBC ---
+  WHOLESALE_ODBC=DSN=Wholesale;UID=LK;PWD=...     # a DSN, or full driver string
+  WHOLESALE_STOCK_SQL=SELECT <code_col>, <qty_col> FROM <lb-182 table> WHERE <warehouse filter>
+  # the query MUST return exactly two columns: product_code, quantity
 
-Config (all via .env, never hard-code the token):
-  WHOLESALE_STOCK_URL=https://<server>/<path>/requestProductStock
-  WHOLESALE_API_TOKEN=...
-  WHOLESALE_ADMIN_CODE=20
-  WHOLESALE_WAREHOUSE_CODE=CENTRAL
-  ODOO_STOCK_LOCATION_ID=5           # WH/Stock today; a Houston location if created
-
-Usage:
-  python3 tools/wholesale_stock_sync.py --dry-run     # report diffs, write nothing
-  python3 tools/wholesale_stock_sync.py --apply       # apply inventory adjustments
+Usage (run these inside the environment):
+  python wholesale_stock_sync.py --test-odbc     # show first rows the SQL returns
+  python wholesale_stock_sync.py --test-odoo     # confirm Odoo is reachable
+  python wholesale_stock_sync.py --dry-run       # report diffs, write nothing
+  python wholesale_stock_sync.py --apply         # apply inventory adjustments
 """
 
 import argparse
 import os
 import sys
 
-import requests
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -37,92 +39,56 @@ from odoo_client import OdooClient
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 
-# --- Wholesale field names — CONFIRM against the Swagger before --apply ---
-WS_FIELD_ADMIN = "administrationCode"
-WS_FIELD_WAREHOUSE = "warehouseCode"
-WS_FIELD_CODES = "productCodes"
-WS_FIELD_PROPERTIES = "propertiesToInclude"
-WS_PROPERTY_STOCK = "stockOverview"
-# Which number in the response is "physical stock". Do NOT trust the label —
-# verify against a known product's voorraadprognose first (per ChatGPT's note).
-WS_RESPONSE_QTY_PATH = ("stockOverview", "physicalStock")
+# ------------------------- Wholesale (ODBC source) -------------------------
+def fetch_stock():
+    """Return {product_code: qty} by running WHOLESALE_STOCK_SQL over ODBC.
+    The query must return two columns: product_code, quantity."""
+    import pyodbc  # imported lazily: only needed on the Wholesale-side machine
+    conn_str = os.getenv("WHOLESALE_ODBC", "")
+    sql = os.getenv("WHOLESALE_STOCK_SQL", "")
+    if not conn_str or not sql:
+        sys.exit("Set WHOLESALE_ODBC and WHOLESALE_STOCK_SQL in .env")
+    out = {}
+    with pyodbc.connect(conn_str, timeout=60) as cx:
+        cur = cx.cursor()
+        cur.execute(sql)
+        for row in cur.fetchall():
+            code = row[0]
+            qty = row[1]
+            if code is None or qty is None:
+                continue
+            code = str(code).strip()
+            try:
+                out[code] = float(qty)
+            except (TypeError, ValueError):
+                continue
+    return out
 
 
-class WholesaleClient:
-    """Adapter around requestProductStock. Finalize once the schema is confirmed."""
-
-    def __init__(self):
-        self.url = os.getenv("WHOLESALE_STOCK_URL", "")
-        self.token = os.getenv("WHOLESALE_API_TOKEN", "")
-        self.admin = os.getenv("WHOLESALE_ADMIN_CODE", "20")
-        self.warehouse = os.getenv("WHOLESALE_WAREHOUSE_CODE", "CENTRAL")
-        if not self.url or not self.token:
-            sys.exit("Set WHOLESALE_STOCK_URL and WHOLESALE_API_TOKEN in .env")
-
-    def fetch_stock(self, product_codes, batch=200):
-        """Return {product_code: physical_qty} for the CENTRAL warehouse."""
-        out = {}
-        for i in range(0, len(product_codes), batch):
-            chunk = product_codes[i:i + batch]
-            payload = {
-                WS_FIELD_ADMIN: self.admin,
-                WS_FIELD_WAREHOUSE: self.warehouse,
-                WS_FIELD_CODES: chunk,
-                WS_FIELD_PROPERTIES: [WS_PROPERTY_STOCK],
-            }
-            r = requests.post(self.url, json=payload, timeout=60, headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            })
-            r.raise_for_status()
-            for row in _iter_products(r.json()):
-                code, qty = _extract(row)
-                if code is not None and qty is not None:
-                    out[str(code)] = qty
-        return out
-
-
-def _iter_products(body):
-    """Yield per-product rows from the response. Adjust to the real shape."""
-    if isinstance(body, dict):
-        return body.get("products") or body.get("items") or body.get("data") or []
-    return body or []
-
-
-def _extract(row):
-    """Pull (product_code, physical_qty) from one response row. CONFIRM keys."""
-    code = row.get("productCode") or row.get("cdprodukt") or row.get("code")
-    node = row
-    for key in WS_RESPONSE_QTY_PATH:
-        node = (node or {}).get(key) if isinstance(node, dict) else None
-    return code, (float(node) if node is not None else None)
-
-
+# ------------------------------ Odoo (target) ------------------------------
 class OdooStock:
     def __init__(self, location_id):
-        self.c = OdooClient()
-        self.c.authenticate()
+        self.c = OdooClient(); self.c.authenticate()
         self.location_id = location_id
 
     def variant_map(self):
-        """default_code -> product.product id (variants; catalogue has no real variants)."""
+        """default_code -> product.product record (variant carrying the stock)."""
         recs = self.c._execute_kw("product.product", "search_read",
             [[["default_code", "!=", False]]],
             {"fields": ["id", "default_code", "is_storable"]})
         return {str(r["default_code"]).strip(): r for r in recs}
 
     def on_hand(self, product_ids):
-        """Current on-hand qty at the target location, per product.product id."""
         quants = self.c._execute_kw("stock.quant", "search_read",
-            [[["location_id", "=", self.location_id], ["product_id", "in", product_ids]]],
+            [[["location_id", "=", self.location_id],
+              ["product_id", "in", product_ids]]],
             {"fields": ["product_id", "quantity"]})
         return {q["product_id"][0]: q["quantity"] for q in quants}
 
     def set_qty(self, product_id, qty):
-        """Inventory adjustment: set counted on-hand to `qty` at the location."""
         existing = self.c._execute_kw("stock.quant", "search",
-            [[["product_id", "=", product_id], ["location_id", "=", self.location_id]]], {})
+            [[["product_id", "=", product_id],
+              ["location_id", "=", self.location_id]]], {})
         if existing:
             self.c._execute_kw("stock.quant", "write",
                 [existing, {"inventory_quantity": qty}], {})
@@ -137,49 +103,60 @@ class OdooStock:
 def main():
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--dry-run", action="store_true", help="report diffs, write nothing")
-    g.add_argument("--apply", action="store_true", help="apply inventory adjustments")
+    g.add_argument("--test-odbc", action="store_true",
+                   help="run the SQL and print the first rows (no Odoo)")
+    g.add_argument("--test-odoo", action="store_true",
+                   help="confirm Odoo login + location (no Wholesale)")
+    g.add_argument("--dry-run", action="store_true")
+    g.add_argument("--apply", action="store_true")
     args = ap.parse_args()
+
+    if args.test_odbc:
+        stock = fetch_stock()
+        print(f"ODBC OK — {len(stock)} rows. Sample:")
+        for code, qty in list(stock.items())[:15]:
+            print(f"  {code} -> {qty}")
+        return
 
     loc = int(os.getenv("ODOO_STOCK_LOCATION_ID", "0"))
     if not loc:
         sys.exit("Set ODOO_STOCK_LOCATION_ID in .env (target location).")
 
+    if args.test_odoo:
+        odoo = OdooStock(loc)
+        vmap = odoo.variant_map()
+        print(f"Odoo OK — {len(vmap)} products with a Kerger number; "
+              f"target location id {loc}.")
+        return
+
     odoo = OdooStock(loc)
     vmap = odoo.variant_map()
-    print(f"{len(vmap)} Odoo products with an internal reference")
-
-    ws = WholesaleClient()
-    ws_stock = ws.fetch_stock(list(vmap.keys()))
-    print(f"{len(ws_stock)} stock figures returned by Wholesale")
+    ws_stock = fetch_stock()
+    print(f"{len(vmap)} Odoo products | {len(ws_stock)} Wholesale stock rows")
 
     ids = [vmap[c]["id"] for c in ws_stock if c in vmap]
     current = odoo.on_hand(ids)
-
     changes, unmatched, non_storable = [], [], []
     for code, qty in ws_stock.items():
         rec = vmap.get(code)
         if not rec:
-            unmatched.append(code)
-            continue
+            unmatched.append(code); continue
         if not rec["is_storable"]:
-            non_storable.append(code)
-            continue
-        now = current.get(rec["id"], 0.0)
-        if now != qty:
-            changes.append((rec["id"], code, now, qty))
+            non_storable.append(code); continue
+        if current.get(rec["id"], 0.0) != qty:
+            changes.append((rec["id"], code, current.get(rec["id"], 0.0), qty))
 
-    print(f"\nto change: {len(changes)} | unmatched: {len(unmatched)} | "
-          f"non-storable (skipped): {len(non_storable)}")
+    print(f"to change: {len(changes)} | unmatched: {len(unmatched)} | "
+          f"non-storable skipped: {len(non_storable)}")
     for _pid, code, now, qty in changes[:20]:
         print(f"  {code}: {now} -> {qty}")
     if unmatched:
         print("  unmatched Wholesale codes (sample):", unmatched[:10])
     if non_storable:
-        print("  NON-STORABLE — make storable to sync (sample):", non_storable[:10])
+        print("  NON-STORABLE (make storable to sync, sample):", non_storable[:10])
 
     if args.apply:
-        for pid, code, _now, qty in changes:
+        for pid, _code, _now, qty in changes:
             odoo.set_qty(pid, qty)
         print(f"\napplied {len(changes)} inventory adjustment(s) at location {loc}")
     else:
