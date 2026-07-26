@@ -94,6 +94,12 @@ _SYNONYM_SETS = [
     {"tube", "tubes", "tl", "buis"},
     {"button", "pushbutton", "drukknop", "knop"},
     {"gland", "wartel", "doorvoer"},
+    {"coffee", "koffie"},
+    {"vacuum", "vacuumcleaner", "stofzuiger", "hoover"},
+    {"machine", "maker", "apparaat", "appliance", "apparaten"},
+    {"cleaning", "cleaner", "schoonmaak", "reiniging"},
+    {"heater", "heating", "verwarming", "kachel"},
+    {"fan", "blower", "ventilator"},
 ]
 _SYN_INDEX = {}
 for _s in _SYNONYM_SETS:
