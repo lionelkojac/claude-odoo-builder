@@ -34,6 +34,25 @@ XLSX = ".tmp/control_data.xlsx"
 BRAND_ATTR_NAME = "Brand"
 
 
+def mfr_code(raw):
+    """Extract the manufacturer TYPE from the 'Leveranciers code' cell, which
+    is formatted differently per brand:
+      Schneider: '<TYPE> <description>'   -> XB4BD21 ROTARY SWITCH
+      Eaton:     '<ordernumber> <TYPE>'   -> 046989 PKZM0-25   (or just a number)
+      Siemens:   '<description> <TYPE>'    -> EINDSCHAK. 3SE5112-0CD02
+    The type is the token with BOTH letters and digits that is NOT a plain
+    order number (all digits + an optional single trailing letter, e.g. 046938R)
+    and not a description word (letters only). Returns '' if there is no type."""
+    if not raw:
+        return ""
+    for t in str(raw).split():
+        t = t.strip()
+        if (re.search(r"[A-Za-z]", t) and re.search(r"\d", t)
+                and not re.fullmatch(r"\d+[A-Za-z]?", t)):
+            return t
+    return ""
+
+
 def load_rows():
     wb = openpyxl.load_workbook(XLSX, read_only=True, data_only=True)
     out = []
@@ -45,8 +64,7 @@ def load_rows():
             "ean": str(r[1]).strip() if r[1] else "",
             "brand": str(r[2]).strip() if r[2] else "",
             "img": str(r[3]).strip() if r[3] and str(r[3]).startswith("http") else "",
-            # Leveranciers code = "<mfr code> <description>" -> keep the code
-            "mfr": (str(r[4]).split()[0].strip() if r[4] else ""),
+            "mfr": mfr_code(r[4]),
         })
     return out
 
@@ -97,10 +115,12 @@ def main():
             # also store Brand + Manufacturer code as spec FIELDS (shown on the
             # product page); the Brand attribute stays for filtering, its on-page
             # selector hidden via CSS.
-            spec = {"x_studio_brand": d["brand"]}
-            if d.get("mfr"):
-                spec["x_studio_manufacturer_code"] = d["mfr"]
-            c._execute_kw("product.template", "write", [[pid], spec], {})
+            # always set the code (or clear it when the file has no real type,
+            # e.g. Eaton rows that carry only an order number) so a bad value
+            # from an earlier run is corrected.
+            c._execute_kw("product.template", "write", [[pid], {
+                "x_studio_brand": d["brand"],
+                "x_studio_manufacturer_code": d.get("mfr") or False}], {})
             if pid not in lines:
                 c._execute_kw("product.template.attribute.line", "create", [{
                     "product_tmpl_id": pid, "attribute_id": attr,
