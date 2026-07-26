@@ -45,6 +45,8 @@ def load_rows():
             "ean": str(r[1]).strip() if r[1] else "",
             "brand": str(r[2]).strip() if r[2] else "",
             "img": str(r[3]).strip() if r[3] and str(r[3]).startswith("http") else "",
+            # Leveranciers code = "<mfr code> <description>" -> keep the code
+            "mfr": (str(r[4]).split()[0].strip() if r[4] else ""),
         })
     return out
 
@@ -92,10 +94,13 @@ def main():
                 n += 1; continue
             vid = get_or_create_value(c, vcache, attr, d["brand"], False)
             pid = byc[d["kerger"]]["id"]
-            # also store Brand as a spec FIELD (shown on the product page); the
-            # attribute stays for filtering, its on-page selector hidden via CSS.
-            c._execute_kw("product.template", "write",
-                          [[pid], {"x_studio_brand": d["brand"]}], {})
+            # also store Brand + Manufacturer code as spec FIELDS (shown on the
+            # product page); the Brand attribute stays for filtering, its on-page
+            # selector hidden via CSS.
+            spec = {"x_studio_brand": d["brand"]}
+            if d.get("mfr"):
+                spec["x_studio_manufacturer_code"] = d["mfr"]
+            c._execute_kw("product.template", "write", [[pid], spec], {})
             if pid not in lines:
                 c._execute_kw("product.template.attribute.line", "create", [{
                     "product_tmpl_id": pid, "attribute_id": attr,
