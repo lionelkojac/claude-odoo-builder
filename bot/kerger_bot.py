@@ -24,6 +24,7 @@ richer advising at higher latency/cost.
 import json
 import os
 import sys
+import threading
 
 import anthropic
 from anthropic import beta_tool
@@ -31,6 +32,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kerger_query import search_products  # noqa: E402
+from kerger_lead import log_no_match  # noqa: E402
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
@@ -89,6 +91,11 @@ def search_kerger_products(query: str = "", code: str = "", limit: int = 8) -> s
     limit = max(1, min(int(limit or 8), 20))
     results = search_products(query=query or None, code=code or None, limit=limit)
     if not results:
+        # record the gap for the team to review — in the background so the
+        # visitor's reply is never delayed by it.
+        threading.Thread(target=log_no_match,
+                         kwargs={"query": query, "code": code},
+                         daemon=True).start()
         return json.dumps({"products": [], "note": "no matching products found"})
     return json.dumps({"products": results}, ensure_ascii=False)
 

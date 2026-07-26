@@ -118,7 +118,27 @@ const log = document.getElementById('log');
 const form = document.getElementById('f');
 const input = document.getElementById('q');
 const send = document.getElementById('send');
-let sessionId = sessionStorage.getItem('kerger_sid') || '';
+
+// Persist the conversation so it follows the visitor across page navigations
+// (the iframe reloads on each page). sessionStorage keeps it for the browser
+// session; a TTL guards against resurrecting a very old chat.
+const STORE_KEY = 'kerger_chat';
+const STORE_TTL = 2 * 3600 * 1000;   // 2 hours
+let state = {sid: '', ts: 0, msgs: []};
+try {
+  const raw = sessionStorage.getItem(STORE_KEY);
+  if (raw) {
+    const s = JSON.parse(raw);
+    if (s && Array.isArray(s.msgs) && (Date.now() - (s.ts || 0)) < STORE_TTL)
+      state = s;
+  }
+} catch (e) {}
+let sessionId = state.sid || '';
+
+function persist(){
+  state.sid = sessionId; state.ts = Date.now();
+  try { sessionStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+}
 
 // Minimal, safe Markdown: escape everything, then re-enable [text](url) links
 // and **bold**. No raw HTML from the model is ever inserted.
@@ -142,13 +162,18 @@ function render(text){
   return html;
 }
 
-function add(role, text){
+function draw(role, text){
   const el = document.createElement('div');
   el.className = 'msg ' + role;
   el.innerHTML = role === 'bot' ? render(text) : text.replace(/</g,'&lt;');
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
   return el;
+}
+
+function add(role, text){
+  state.msgs.push({role, text}); persist();
+  return draw(role, text);
 }
 
 function typing(on){
@@ -160,9 +185,14 @@ function typing(on){
   } else if(!on && t){ t.remove(); }
 }
 
-add('bot', "Welcome. I can help you find the right Kerger product — tell me what "
-  + "you're looking for, or give me a Kerger number, IMPA/ISSA code or "
-  + "manufacturer type.");
+const WELCOME = "Welcome. I can help you find the right Kerger product — tell me "
+  + "what you're looking for, or give me a Kerger number, IMPA/ISSA code or "
+  + "manufacturer type.";
+if (state.msgs.length) {
+  state.msgs.forEach(m => draw(m.role, m.text));   // replay prior conversation
+} else {
+  add('bot', WELCOME);
+}
 
 form.addEventListener('submit', async e => {
   e.preventDefault();
@@ -178,8 +208,7 @@ form.addEventListener('submit', async e => {
     });
     const data = await res.json();
     typing(false);
-    if(data.session_id){ sessionId = data.session_id;
-      sessionStorage.setItem('kerger_sid', sessionId); }
+    if(data.session_id){ sessionId = data.session_id; persist(); }
     add('bot', data.reply || data.error || 'Sorry, something went wrong.');
   }catch(err){
     typing(false);

@@ -14,9 +14,11 @@ Two lookup modes, combinable:
             barcode). Punctuation-insensitive: "LC1-D95P7" and "LC1D95P7" both
             hit, because codes are mirrored (raw + stripped) into the indexed
             `description` field by tools/sync_impa_search.py.
-  * query — free text (a lamp type, socket/base, colour, application). Matched
-            token-by-token (AND) across the product name + description, so
-            "p28s white 24v" narrows to products whose text has all three.
+  * query — free text (a lamp type, socket/base, colour, application). Recall is
+            widened with a marine-electro synonym map (EN <-> NL: fuse/zekering,
+            cable/kabel, battery/accu, bulb/lamp, ...) and simple plural folding,
+            then degraded gracefully: a strict all-terms match first, and if that
+            is thin, a scored any-term match ranked by how many terms hit.
 """
 
 import os
@@ -38,7 +40,6 @@ _FIELDS = [
     "x_studio_height_cm", "x_studio_weight_kg_1",
 ]
 
-# Human labels for the spec fields we expose to the bot.
 _SPEC_LABELS = [
     ("x_studio_brand", "brand"),
     ("x_studio_manufacturer_code", "manufacturer_code"),
@@ -56,15 +57,48 @@ _SPEC_LABELS = [
     ("x_studio_weight_kg_1", "weight_kg"),
 ]
 
-# Stop-words we drop from a free-text query before token matching, so filler
-# ("a lamp for the engine room") doesn't over-narrow the AND search.
-_STOP = {
-    "a", "an", "the", "for", "with", "and", "or", "of", "to", "in", "on",
-    "me", "i", "we", "need", "want", "looking", "search", "find", "please",
-    "lamp", "light", "product", "products", "item", "type", "kerger",
-    "een", "de", "het", "voor", "met", "en", "of", "van", "ik", "zoek",
-    "nodig", "lamp", "lampje",
+# Pure filler — always dropped from a query.
+_FILLER = {
+    "a", "an", "the", "for", "with", "and", "or", "of", "to", "in", "on", "my",
+    "me", "i", "we", "you", "need", "want", "looking", "look", "search", "find",
+    "please", "have", "do", "does", "got", "some", "any", "product", "products",
+    "item", "items", "type", "kerger", "something", "thing",
+    "een", "de", "het", "voor", "met", "en", "of", "van", "ik", "wij", "je",
+    "zoek", "zoeken", "nodig", "heb", "hebben", "graag", "iets", "wat",
 }
+
+# Common in a lighting catalogue, so low-signal: dropped ONLY when the query has
+# other, stronger words (kept if it's all the visitor gave us).
+_COMMON = {"lamp", "lamps", "light", "lights", "lampje", "lampen", "lampen"}
+
+# Marine / offshore electro synonyms (EN <-> NL and near-equivalents). Each set
+# is expanded as an OR group, so any member matches. Keep terms lowercase.
+_SYNONYM_SETS = [
+    {"lamp", "bulb", "light", "lampje", "lampen"},
+    {"fuse", "zekering", "zekeringen", "smeltveiligheid"},
+    {"cable", "kabel", "kabels", "wire", "wiring", "cord", "snoer", "lead"},
+    {"battery", "batteries", "accu", "accu's", "batterij", "batterijen"},
+    {"switch", "switches", "schakelaar", "schakelaars"},
+    {"connector", "connectors", "plug", "stekker", "coupling", "coupler"},
+    {"socket", "base", "holder", "fitting", "houder", "voet", "cap"},
+    {"relay", "relays", "relais"},
+    {"capacitor", "capacitors", "condensator", "condensatoren", "cap"},
+    {"contactor", "contactors", "magneetschakelaar"},
+    {"breaker", "breakers", "mcb", "automaat", "installatieautomaat"},
+    {"transformer", "trafo", "transformator", "transformador"},
+    {"resistor", "resistors", "weerstand", "weerstanden"},
+    {"terminal", "terminals", "klem", "klemmen"},
+    {"waterproof", "watertight", "waterdicht", "sealed"},
+    {"navigation", "nav", "navigatie"},
+    {"indicator", "signal", "signaal", "indicatie", "pilot"},
+    {"tube", "tubes", "tl", "buis"},
+    {"button", "pushbutton", "drukknop", "knop"},
+    {"gland", "wartel", "doorvoer"},
+]
+_SYN_INDEX = {}
+for _s in _SYNONYM_SETS:
+    for _w in _s:
+        _SYN_INDEX.setdefault(_w, set()).update(_s)
 
 _cache = {"client": None, "categs": None}
 
@@ -134,43 +168,100 @@ def _code_domain(code):
             ("x_studio_manufacturer_code", "ilike", stripped),
             ("description", "ilike", stripped),
         ]
-    dom = ["|"] * (len(terms) - 1) + [list(t) for t in terms]
-    return dom
+    return ["|"] * (len(terms) - 1) + [list(t) for t in terms]
 
 
-def _tokens(query):
+def _singulars(word):
+    """Naive EN/NL plural folding: add likely singular stems."""
+    out = {word}
+    for suf in ("en", "s"):
+        if word.endswith(suf) and len(word) - len(suf) >= 3:
+            out.add(word[: -len(suf)])
+    return out
+
+
+def _groups(query):
+    """Turn a free-text query into a list of OR-groups (each a set of terms).
+
+    A group is one meaningful word expanded with plurals + synonyms. Filler is
+    dropped; low-signal words (lamp/light) are dropped only if stronger words
+    remain, so a bare "lamp" still searches.
+    """
     toks = re.findall(r"[A-Za-z0-9]+(?:[.\-/][A-Za-z0-9]+)*", query or "")
-    keep = []
+    strong, common = [], []
     for t in toks:
         low = t.lower()
-        # keep anything with a digit (codes, voltages, sizes) or a non-trivial
-        # word that isn't filler
-        if re.search(r"\d", t) or (len(low) > 2 and low not in _STOP):
-            keep.append(t)
-    return keep
+        if low in _FILLER:
+            continue
+        if re.search(r"\d", t):          # codes, voltages, sizes — always strong
+            strong.append(t)
+        elif low in _COMMON:
+            common.append(t)
+        elif len(low) > 2:
+            strong.append(t)
+    chosen = strong or common
+    groups = []
+    for t in chosen:
+        low = t.lower()
+        grp = set()
+        for form in _singulars(low):
+            grp.add(form)
+            grp |= _SYN_INDEX.get(form, set())
+        grp.add(t)
+        groups.append(grp)
+    return groups
 
 
-def _query_domain(query):
-    """AND across tokens; each token must appear in name OR description."""
+def _term_or(field_terms):
+    """Build an OR sub-domain from a list of (field, op, value) leaves."""
+    if not field_terms:
+        return []
+    return ["|"] * (len(field_terms) - 1) + [list(t) for t in field_terms]
+
+
+def _strict_domain(groups):
+    """All groups must match (AND); within a group, any term in name/description."""
     dom = [("website_published", "=", True)]
-    for tok in _tokens(query):
-        dom += ["|", ("name", "ilike", tok), ("description", "ilike", tok)]
+    for grp in groups:
+        leaves = []
+        for term in grp:
+            leaves += [("name", "ilike", term), ("description", "ilike", term)]
+        dom += _term_or(leaves)
     return dom
+
+
+def _relaxed_domain(groups):
+    """Any term from any group (OR) — the wide net for scoring."""
+    leaves = []
+    for grp in groups:
+        for term in grp:
+            leaves += [("name", "ilike", term), ("description", "ilike", term)]
+    return [("website_published", "=", True)] + _term_or(leaves)
+
+
+def _score(rec, groups):
+    """How many groups the record matches; name hits weigh more than description."""
+    name = (rec.get("name") or "").lower()
+    desc = (rec.get("description") or "").lower()
+    s = 0
+    for grp in groups:
+        if any(t.lower() in name for t in grp):
+            s += 2
+        elif any(t.lower() in desc for t in grp):
+            s += 1
+    return s
 
 
 def search_products(query=None, code=None, limit=8):
     """Search the live Kerger catalogue. Returns a list of product dicts.
 
-    At least one of `query` / `code` should be given. Exact-code hits are
-    returned first, then free-text hits, de-duplicated, capped at `limit`.
+    Exact-code hits first, then free-text: a strict all-terms match, topped up
+    (if thin) with a scored any-term match. De-duplicated, capped at `limit`.
     """
     client = _client()
     seen, results = set(), []
 
-    def collect(domain, cap):
-        recs = client._execute_kw(
-            "product.template", "search_read", [domain],
-            {"fields": _FIELDS, "limit": cap})
+    def collect(recs):
         for r in recs:
             if r["id"] in seen:
                 continue
@@ -178,9 +269,24 @@ def search_products(query=None, code=None, limit=8):
             results.append(_format(client, r))
 
     if code and code.strip():
-        collect(_code_domain(code), limit)
+        collect(client._execute_kw("product.template", "search_read",
+                [_code_domain(code)], {"fields": _FIELDS, "limit": limit}))
 
     if query and query.strip() and len(results) < limit:
-        collect(_query_domain(query), limit - len(results))
+        groups = _groups(query)
+        if groups:
+            need = limit - len(results)
+            # 1) strict: all terms present
+            collect(client._execute_kw("product.template", "search_read",
+                    [_strict_domain(groups)], {"fields": _FIELDS, "limit": need}))
+            # 2) relaxed + scored: fill remaining with best partial matches
+            if len(results) < limit:
+                cand = client._execute_kw("product.template", "search_read",
+                        [_relaxed_domain(groups)],
+                        {"fields": _FIELDS + ["description"], "limit": 60})
+                cand = [r for r in cand if r["id"] not in seen]
+                cand.sort(key=lambda r: (_score(r, groups), -len(r.get("name") or "")),
+                          reverse=True)
+                collect(cand[: limit - len(results)])
 
     return results[:limit]

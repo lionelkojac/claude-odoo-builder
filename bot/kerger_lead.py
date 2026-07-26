@@ -21,8 +21,9 @@ import re
 from kerger_query import client
 
 SHOP_LC_CHANNEL = int(os.getenv("KERGER_LIVECHAT_CHANNEL_ID", "2"))
+NOMATCH_CHANNEL_NAME = "Advisor · unmatched queries"
 
-_cache = {"operators": None, "author": None}
+_cache = {"operators": None, "author": None, "nomatch_channel": None}
 
 
 def _operators(c):
@@ -115,3 +116,44 @@ def send_enquiry(messages, name="", email="", note=""):
     for speaker, text in transcript_turns(messages):
         post(f"{speaker}: {text}")
     return channel
+
+
+def _nomatch_channel(c):
+    if _cache["nomatch_channel"] is not None:
+        return _cache["nomatch_channel"]
+    ids = c._execute_kw("discuss.channel", "search",
+                        [[["name", "=", NOMATCH_CHANNEL_NAME],
+                          ["channel_type", "=", "channel"]]], {"limit": 1})
+    if ids:
+        ch = ids[0]
+    else:
+        partners, _ = _operators(c)
+        vals = {"name": NOMATCH_CHANNEL_NAME, "channel_type": "channel"}
+        if partners:
+            vals["channel_member_ids"] = [(0, 0, {"partner_id": p}) for p in partners]
+        ch = c._execute_kw("discuss.channel", "create", [vals], {})
+    _cache["nomatch_channel"] = ch
+    return ch
+
+
+def log_no_match(query="", code=""):
+    """Record a search that returned nothing, into a dedicated Discuss channel
+    the team can review to spot catalogue gaps / missing synonyms. Best-effort:
+    never raises (called in a background thread from the chat tool)."""
+    try:
+        c = client()
+        ch = _nomatch_channel(c)
+        _, author = _operators(c)
+        parts = []
+        if (query or "").strip():
+            parts.append(f"query: {query.strip()}")
+        if (code or "").strip():
+            parts.append(f"code: {code.strip()}")
+        body = "No match — " + " · ".join(parts) if parts else "No match"
+        kw = {"body": body, "message_type": "comment",
+              "subtype_xmlid": "mail.mt_comment"}
+        if author:
+            kw["author_id"] = author
+        c._execute_kw("discuss.channel", "message_post", [[ch]], kw)
+    except Exception:
+        pass
