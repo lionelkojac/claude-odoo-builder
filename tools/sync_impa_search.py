@@ -34,7 +34,9 @@ MARKER_RE = re.compile(r'<p class="o_impa_search">.*?</p>', re.DOTALL)
 # Product code fields to make searchable, in display order. Each is resolved to
 # an actual field name at runtime (by exact name, else by matching label), so a
 # field that does not exist yet is simply skipped until it's created.
-CODE_LABELS = ["IMPA", "ISSA"]
+# "Manufacturer code" resolves (by label) to x_studio_manufacturer_code, so the
+# supplier type (XB4BD21, LC1-D95P7, PKZM0-25, 3SE5112-0CD02 …) is searchable.
+CODE_LABELS = ["IMPA", "ISSA", "Manufacturer code"]
 
 
 def resolve_code_fields(client):
