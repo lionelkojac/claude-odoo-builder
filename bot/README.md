@@ -30,8 +30,9 @@ browser widget ──HTTP──▶ Flask backend ──▶ Claude (tool_runner)
 |------|------|
 | `kerger_query.py` | The grounded lookup: builds Odoo domains, returns product dicts (code, name, category, specs, link — **never a price**). Reuses `../tools/odoo_client.py`. |
 | `kerger_bot.py`   | The Claude agent: the `@beta_tool search_kerger_products` wrapper, the advisor system prompt, and a stateful `Conversation` class. Also a CLI. |
-| `server.py`       | Flask HTTP backend: `/chat`, `/health`, serves the widget. In-memory per-visitor sessions, CORS, per-session locking. |
-| `widget.html`     | Brand-styled embeddable chat UI. Renders the bot's Markdown links; talks to `/chat` same-origin. |
+| `server.py`       | Flask HTTP backend: `/chat`, `/lead`, `/health`, serves the widget. In-memory per-visitor sessions, CORS, per-session locking, per-IP rate limiting. |
+| `kerger_lead.py`  | "Send this chat to Kerger": posts the conversation into the livechat **operator inbox** (Discuss) as a threaded `discuss.channel`, so the sales team can follow up by email. No CRM module needed. |
+| `widget.html`     | Brand-styled embeddable chat UI. Renders the bot's Markdown links; talks to `/chat` and `/lead` same-origin. |
 
 All secrets (Anthropic API key, Odoo credentials) stay **server-side**. The
 browser only ever calls this backend — never Anthropic or Odoo directly.
@@ -60,6 +61,23 @@ high-traffic, latency-sensitive public widget and the query tool does the
 factual work, so the fast/cheap model is the right production default. For
 richer advising at higher latency/cost, set `KERGER_BOT_MODEL=claude-opus-5`
 (or `claude-sonnet-5`).
+
+## "Send to Kerger" → livechat operator inbox
+
+CRM isn't installed on this Odoo, so the advisor doesn't create `crm.lead`s.
+Instead, the widget's **"Send this chat to Kerger"** button posts the whole
+conversation (plus the visitor's name/email/note) into the **livechat operator
+inbox** in Discuss — the same place the team already sees live chats. It creates
+a `discuss.channel` (type `livechat`, attached to the shop livechat channel),
+adds the operator(s) as members so it shows unread in their inbox, and posts one
+message per turn (authored by the archived "Product advisor" bot partner, so the
+operator gets notified). The team replies to the visitor by email.
+
+Relevant env (all optional):
+- `KERGER_LIVECHAT_CHANNEL_ID` — the `im_livechat.channel` id (default `2` = shop)
+- `KERGER_ADVISOR_PARTNER_ID` — author partner id (else found by name "Product advisor")
+- `CHAT_RATE_LIMIT` / `CHAT_RATE_WINDOW` — /chat limit (default 40 / 300s per IP)
+- `LEAD_RATE_LIMIT` / `LEAD_RATE_WINDOW` — /lead limit (default 5 / 3600s per IP)
 
 ## Deploy to Railway
 

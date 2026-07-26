@@ -30,6 +30,7 @@ from threading import Lock
 from flask import Flask, jsonify, request, send_from_directory
 
 from kerger_bot import Conversation
+from kerger_lead import send_enquiry
 
 HERE = os.path.dirname(__file__)
 
@@ -46,8 +47,38 @@ ALLOWED_ORIGINS = [o.strip() for o in
 SESSION_TTL = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 MAX_MESSAGE_CHARS = 2000
 
-_sessions = {}          # session_id -> {"convo": Conversation, "seen": ts}
+# Basic per-IP rate limits (sliding window) so the open endpoint can't be used
+# to burn API credit or spam the sales inbox. In-memory per worker.
+CHAT_LIMIT = int(os.getenv("CHAT_RATE_LIMIT", "40"))       # per window
+CHAT_WINDOW = int(os.getenv("CHAT_RATE_WINDOW", "300"))    # seconds
+LEAD_LIMIT = int(os.getenv("LEAD_RATE_LIMIT", "5"))
+LEAD_WINDOW = int(os.getenv("LEAD_RATE_WINDOW", "3600"))
+
+_sessions = {}          # session_id -> {"convo": Conversation, "seen": ts, "lock": Lock}
+_hits = {}              # (bucket, ip) -> [timestamps]
 _lock = Lock()
+
+
+def _client_ip():
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return (fwd.split(",")[0].strip() if fwd else request.remote_addr) or "?"
+
+
+def _rate_ok(bucket, ip, limit, window):
+    now = time.time()
+    with _lock:
+        key = (bucket, ip)
+        hits = [t for t in _hits.get(key, []) if now - t < window]
+        if len(hits) >= limit:
+            _hits[key] = hits
+            return False
+        hits.append(now)
+        _hits[key] = hits
+        # opportunistic cleanup of stale buckets
+        if len(_hits) > 5000:
+            for k in [k for k, v in _hits.items() if not v or now - v[-1] > window]:
+                _hits.pop(k, None)
+        return True
 
 
 def _origin_allowed(origin):
@@ -87,6 +118,9 @@ def chat():
     if request.method == "OPTIONS":
         return ("", 204)
 
+    if not _rate_ok("chat", _client_ip(), CHAT_LIMIT, CHAT_WINDOW):
+        return jsonify(error="Too many messages — please slow down a moment."), 429
+
     data = request.get_json(silent=True) or {}
     message = (data.get("message") or "").strip()
     session_id = (data.get("session_id") or "").strip()
@@ -116,6 +150,40 @@ def chat():
                        detail=str(e)[:200]), 502
 
     return jsonify(session_id=session_id, reply=reply)
+
+
+@app.route("/lead", methods=["POST", "OPTIONS"])
+def lead():
+    """Hand the current conversation to Kerger's livechat operator inbox."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    if not _rate_ok("lead", _client_ip(), LEAD_LIMIT, LEAD_WINDOW):
+        return jsonify(error="You've already sent this. The team will be in touch."), 429
+
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    name = (data.get("name") or "").strip()[:120]
+    email = (data.get("email") or "").strip()[:200]
+    note = (data.get("note") or "").strip()[:1000]
+
+    with _lock:
+        entry = _sessions.get(session_id)
+    if not entry:
+        return jsonify(error="no active conversation to send"), 400
+
+    messages = entry["convo"].messages
+    if not messages:
+        return jsonify(error="the conversation is empty"), 400
+
+    try:
+        with entry["lock"]:
+            send_enquiry(messages, name=name, email=email, note=note)
+    except Exception as e:
+        app.logger.exception("lead error")
+        return jsonify(error="could not send to Kerger", detail=str(e)[:200]), 502
+
+    return jsonify(ok=True)
 
 
 if __name__ == "__main__":

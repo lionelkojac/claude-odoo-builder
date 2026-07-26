@@ -61,6 +61,22 @@
   button:disabled{opacity:.5;cursor:default}
   .hint{font-size:11px;color:#7d8f9b;text-align:center;padding:0 14px 10px;
     background:#fff}
+  .handoff{background:#fff;border-top:1px solid var(--line);padding:8px 14px}
+  .handoff-open{width:100%;background:none;border:0;color:var(--navy);
+    font-size:12px;font-weight:600;cursor:pointer;padding:4px;text-align:center}
+  .handoff-open:hover{color:var(--blue)}
+  #handoff-form{display:none;flex-direction:column;gap:7px;padding-top:4px}
+  #handoff-form.show{display:flex}
+  #handoff-form input,#handoff-form textarea{border:1px solid var(--line);
+    border-radius:7px;padding:8px 10px;font-size:13px;font-family:inherit;
+    outline:none;color:var(--ink)}
+  #handoff-form input:focus,#handoff-form textarea:focus{border-color:var(--blue)}
+  #handoff-form textarea{resize:vertical;min-height:38px}
+  .handoff-row{display:flex;gap:7px}
+  .handoff-row button{flex:0 0 auto;padding:0 14px}
+  .handoff-cancel{background:#fff !important;color:#7d8f9b !important;
+    border:1px solid var(--line) !important}
+  .handoff-note{font-size:11px;color:#7d8f9b;text-align:center}
 </style>
 </head>
 <body>
@@ -78,6 +94,22 @@
            placeholder="Ask about a product, code or application…">
     <button id="send" type="submit">Send</button>
   </form>
+  <div class="handoff">
+    <button type="button" class="handoff-open" id="handoff-open">
+      ✉ Send this chat to Kerger for a personal follow-up
+    </button>
+    <form id="handoff-form">
+      <input id="h-name" placeholder="Your name" autocomplete="name">
+      <input id="h-email" type="email" placeholder="Your email" autocomplete="email">
+      <textarea id="h-note" placeholder="Anything to add? (optional)"></textarea>
+      <div class="handoff-row">
+        <button type="submit" id="h-send" style="flex:1">Send to Kerger</button>
+        <button type="button" class="handoff-cancel" id="h-cancel">Cancel</button>
+      </div>
+      <div class="handoff-note">Your conversation and contact details go to our
+        sales team, who will reply by email.</div>
+    </form>
+  </div>
   <div class="hint">Prices are personal — log in to your account to see yours.</div>
 </div>
 
@@ -156,6 +188,45 @@ form.addEventListener('submit', async e => {
   input.disabled=false; send.disabled=false; input.focus();
 });
 input.focus();
+
+// --- Send to Kerger (livechat operator inbox) ---
+const hOpen = document.getElementById('handoff-open');
+const hForm = document.getElementById('handoff-form');
+const hCancel = document.getElementById('h-cancel');
+const hSend = document.getElementById('h-send');
+
+hOpen.addEventListener('click', ()=>{
+  hForm.classList.add('show'); hOpen.style.display='none';
+  document.getElementById('h-name').focus();
+});
+hCancel.addEventListener('click', ()=>{
+  hForm.classList.remove('show'); hOpen.style.display='';
+});
+hForm.addEventListener('submit', async e=>{
+  e.preventDefault();
+  const name = document.getElementById('h-name').value.trim();
+  const email = document.getElementById('h-email').value.trim();
+  const note = document.getElementById('h-note').value.trim();
+  if(!email){ document.getElementById('h-email').focus(); return; }
+  hSend.disabled=true; hSend.textContent='Sending…';
+  try{
+    const res = await fetch('/lead', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sessionId, name, email, note})
+    });
+    const data = await res.json();
+    hForm.classList.remove('show'); hOpen.style.display='';
+    hSend.disabled=false; hSend.textContent='Send to Kerger';
+    hForm.reset();
+    add('bot', data.ok
+      ? "Thank you — I've sent this conversation to the Kerger sales team. "
+        + "They'll get back to you by email shortly."
+      : (data.error || "Sorry, I couldn't send that just now. Please try again."));
+  }catch(err){
+    hSend.disabled=false; hSend.textContent='Send to Kerger';
+    add('bot', "Sorry, I couldn't reach Kerger just now. Please try again.");
+  }
+});
 </script>
 </body>
 </html>

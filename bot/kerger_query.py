@@ -77,6 +77,12 @@ def _client():
     return _cache["client"]
 
 
+def client():
+    """Public accessor for the shared, authenticated OdooClient (reused by the
+    lead-email flow so it doesn't open a second session)."""
+    return _client()
+
+
 def _categ_names(client, ids):
     if not ids:
         return []
