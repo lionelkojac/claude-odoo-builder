@@ -31,9 +31,13 @@ from odoo_client import OdooClient  # noqa: E402
 BASE_URL = os.getenv("KERGER_BASE_URL", "https://kerger.odoo.com")
 
 # Fields read for every hit. Order here is also the order we surface specs in.
+# NOTE: x_studio_impa is deliberately NOT read/returned — IMPA is an INPUT only
+# (customers can look a product up by it, and _code_domain still searches it),
+# but it must never be shown in the chat. The bot can only state what a tool
+# result contains, so leaving IMPA out keeps it out of replies.
 _FIELDS = [
     "default_code", "name", "public_categ_ids", "website_url",
-    "x_studio_impa", "x_studio_issa_1", "x_studio_manufacturer_code",
+    "x_studio_issa_1", "x_studio_manufacturer_code",
     "x_studio_brand", "x_studio_voltage_2_v", "x_studio_wattage_w",
     "x_studio_socket2", "x_studio_color_temperature", "x_studio_ip_rating",
     "x_studio_shape", "x_studio_length_cm", "x_studio_width_cm",
@@ -43,7 +47,6 @@ _FIELDS = [
 _SPEC_LABELS = [
     ("x_studio_brand", "brand"),
     ("x_studio_manufacturer_code", "manufacturer_code"),
-    ("x_studio_impa", "IMPA"),
     ("x_studio_issa_1", "ISSA"),
     ("x_studio_voltage_2_v", "voltage_V"),
     ("x_studio_wattage_w", "wattage_W"),
