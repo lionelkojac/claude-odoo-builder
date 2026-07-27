@@ -5,11 +5,14 @@ The pricelist = per-product AGREED prices (fixed) + one GLOBAL fallback rule of
 18% off the Sales Price. Odoo applies the most specific matching rule first, so
 listed products get their agreed price and everything else gets 18% off.
 
-CSV (semicolon-delimited, NL decimals):  Product;Description;Code pricelist;Price
+CSV (semicolon-delimited, NL decimals). Columns detected by header; recognised:
+  Product ; Description ; Code pricelist ; Price ; [Date start] ; [Date end] ; ...
 
-Idempotent: on --apply it first removes DCK's existing rules, then recreates the
-agreed-price rules (batched) + the 18% global rule, and assigns the pricelist to
-the Deckhouse customer.
+Only VALID prices are imported: price > 0 AND (if the file gives dates) the
+date window covers today. Each rule is stamped with its start/end dates, so
+Odoo enforces the window and auto-expires it. Because --apply first wipes DCK's
+existing rules, any price previously loaded that is not in the new valid set is
+removed (the product falls back to the 18% rule).
 
 Usage:
   python3 tools/build_deckhouse_pricelist.py --file ... --dry-run
@@ -18,6 +21,7 @@ Usage:
 
 import argparse
 import csv
+import datetime
 import os
 import sys
 
@@ -27,6 +31,7 @@ from odoo_client import OdooClient
 PRICELIST_NAME = "DCK"
 CUSTOMER_NAME = "Deckhouse Inc"
 FALLBACK_DISCOUNT = 18.0   # percent off list_price for non-listed items
+TODAY = datetime.date.today()
 
 
 def parse_price(raw):
@@ -37,16 +42,47 @@ def parse_price(raw):
         return None
 
 
+def parse_date(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        d, m, y = raw.split("-")
+        return datetime.date(int(y), int(m), int(d))
+    except (ValueError, TypeError):
+        return None
+
+
 def load(path):
-    rows = []
+    """Return [(code, desc, price, date_start, date_end)] using header names."""
     with open(path, encoding="utf-8-sig") as fh:
         r = csv.reader(fh, delimiter=";")
-        next(r, None)
+        header = [h.strip().lower() for h in next(r, [])]
+        idx = {name: header.index(name) for name in header}
+        i_code = idx.get("product", 0)
+        i_desc = idx.get("description", 1)
+        i_price = idx.get("price", 3)
+        i_ds = idx.get("date start")
+        i_de = idx.get("date end")
+        rows = []
         for x in r:
-            if len(x) < 4 or not x[0].strip():
+            if len(x) <= i_price or not x[i_code].strip():
                 continue
-            rows.append((x[0].strip(), x[1].strip(), parse_price(x[3])))
+            ds = parse_date(x[i_ds]) if i_ds is not None and len(x) > i_ds else None
+            de = parse_date(x[i_de]) if i_de is not None and len(x) > i_de else None
+            rows.append((x[i_code].strip(), x[i_desc].strip(),
+                         parse_price(x[i_price]), ds, de))
     return rows
+
+
+def is_valid(price, ds, de):
+    if price in (None, 0):
+        return False
+    if ds and TODAY < ds:
+        return False
+    if de and TODAY > de:
+        return False
+    return True
 
 
 def main():
@@ -67,30 +103,37 @@ def main():
     plid = pl[0]["id"]
 
     rows = load(args.file)
-    codes = [a for a, _, _ in rows]
+    valid_rows = [r for r in rows if is_valid(r[2], r[3], r[4])]
+    invalid = len(rows) - len(valid_rows)
+    codes = [r[0] for r in valid_rows]
     # match to ACTIVE products (a pricelist rule should point at the live product)
     prods = c._execute_kw("product.template", "search_read",
         [[["default_code", "in", codes]]], {"fields": ["id", "default_code", "name", "list_price"]})
     byc = {str(p["default_code"]).strip(): p for p in prods}
 
     items, anomalies, unmatched = [], [], []
-    for code, desc, price in rows:
-        if price in (None, 0):
-            continue
+    for code, desc, price, ds, de in valid_rows:
         if code not in byc:
             unmatched.append(code)
             continue
         p = byc[code]
-        items.append({"pricelist_id": plid, "applied_on": "1_product",
-                      "product_tmpl_id": p["id"], "compute_price": "fixed",
-                      "fixed_price": round(price, 2), "min_quantity": 0})
+        vals = {"pricelist_id": plid, "applied_on": "1_product",
+                "product_tmpl_id": p["id"], "compute_price": "fixed",
+                "fixed_price": round(price, 2), "min_quantity": 0}
+        if ds:
+            vals["date_start"] = f"{ds.isoformat()} 00:00:00"
+        if de:
+            vals["date_end"] = f"{de.isoformat()} 23:59:59"
+        items.append(vals)
         lp = p["list_price"] or 0
         if lp and price > lp + 0.005:
             anomalies.append((code, p["name"], lp, price))
 
-    print(f"CSV rows: {len(rows)} | agreed-price rules to create: {len(items)} | "
-          f"unmatched (skipped): {len(unmatched)}")
+    print(f"CSV rows: {len(rows)} | valid (in-date, price>0): {len(valid_rows)} | "
+          f"invalid skipped: {invalid}")
+    print(f"agreed-price rules to create: {len(items)} | unmatched (skipped): {len(unmatched)}")
     print(f"+ 1 global fallback rule: {FALLBACK_DISCOUNT:.0f}% off Sales Price")
+    print("(a full rebuild — any current DCK price not in this valid set is removed)")
     if anomalies:
         print(f"\n{len(anomalies)} agreed prices ABOVE the catalog price (please review):")
         for code, nm, lp, pr in anomalies:
