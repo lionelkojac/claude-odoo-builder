@@ -39,9 +39,12 @@ VIEWS = [
         "inherit": "website_sale.products_item",
         # the card image container uses t-attf-class (dynamic), so hasclass()
         # can't see it at inheritance time — match the t-attf-class attribute.
+        # Only signed-in users see stock (public visitors get nothing).
         "arch": f"""<data>
   <xpath expr="//div[contains(@t-attf-class, 'oe_product_image')]" position="inside">
-    {BADGE}
+    <t t-if="not website.is_public_user()">
+      {BADGE}
+    </t>
   </xpath>
 </data>""",
     },
@@ -51,7 +54,7 @@ VIEWS = [
         "inherit": "website_sale.product",
         "arch": f"""<data>
   <xpath expr="//t[@t-call='website_sale.product_price']" position="after">
-    <div class="kerger-stock-line mt-2">
+    <div t-if="not website.is_public_user()" class="kerger-stock-line mt-2">
       {BADGE}
       <small t-if="product.x_studio_stock_as_of" class="text-muted ms-2">as of <t t-out="product.x_studio_stock_as_of"/></small>
     </div>
