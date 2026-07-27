@@ -53,7 +53,7 @@ VIEWS = [
   <xpath expr="//t[@t-call='website_sale.product_price']" position="after">
     <div class="kerger-stock-line mt-2">
       {BADGE}
-      <small t-if="product.x_studio_stock_as_of" class="text-muted ms-2">as of <t t-esc="product.x_studio_stock_as_of"/></small>
+      <small t-if="product.x_studio_stock_as_of" class="text-muted ms-2">as of <t t-out="product.x_studio_stock_as_of"/></small>
     </div>
   </xpath>
 </data>""",
