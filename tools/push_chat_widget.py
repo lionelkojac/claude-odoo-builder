@@ -57,10 +57,23 @@ def block(url):
   var btn=document.getElementById('kerger-advisor-btn');
   var panel=document.getElementById('kerger-advisor-panel');
   if(!btn||!panel) return;
+  function open(){{
+    panel.classList.add('open');
+    if(panel.getAttribute('src')==='about:blank') panel.setAttribute('src',URL);
+  }}
   btn.addEventListener('click',function(){{
-    var open=panel.classList.toggle('open');
-    if(open && panel.getAttribute('src')==='about:blank') panel.setAttribute('src',URL);
+    // once the visitor interacts, don't auto-pop again this session
+    try{{sessionStorage.setItem('kerger_advisor_seen','1');}}catch(e){{}}
+    if(panel.classList.contains('open')) panel.classList.remove('open'); else open();
   }});
+  // auto-open once per browser session, 10s after load
+  setTimeout(function(){{
+    try{{ if(sessionStorage.getItem('kerger_advisor_seen')) return; }}catch(e){{}}
+    if(!panel.classList.contains('open')){{
+      open();
+      try{{sessionStorage.setItem('kerger_advisor_seen','1');}}catch(e){{}}
+    }}
+  }}, 10000);
 }})();
 </script>
 {END}"""
