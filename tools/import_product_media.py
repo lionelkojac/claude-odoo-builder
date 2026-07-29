@@ -56,7 +56,11 @@ def fetch(url):
 
 def load(path):
     with open(path, encoding="utf-8-sig") as fh:
-        return list(csv.DictReader(fh))
+        head = fh.readline()
+        delim = ";" if head.count(";") > head.count(",") else ","
+        fh.seek(0)
+        # utf-8-sig again handles a BOM at the very start
+        return list(csv.DictReader(fh, delimiter=delim))
 
 
 def main():

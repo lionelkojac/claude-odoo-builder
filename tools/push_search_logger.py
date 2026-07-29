@@ -31,12 +31,18 @@ def block(url):
 <script>
 (function(){{
   try{{
-    if(location.pathname.indexOf('/shop')!==0) return;
+    var path=location.pathname;
+    var onShop=path.indexOf('/shop')===0;               // shop search box
+    var onSite=path.indexOf('/website/search')===0;      // header (site-wide) search box
+    if(!onShop && !onSite) return;
     var term=new URLSearchParams(location.search).get('search');
     if(!term) return;
-    var results=document.querySelectorAll('.oe_product_cart').length;
+    // result count is reliable on the shop grid (.oe_product_cart); on the
+    // site-wide results page leave it unknown so it isn't miscounted as 0.
+    var results=onShop ? document.querySelectorAll('.oe_product_cart').length : null;
     var loggedIn=!!document.querySelector('a[href*="/web/session/logout"]');
-    var payload=JSON.stringify({{term:term, results:results, logged_in:loggedIn, source:'shop'}});
+    var payload=JSON.stringify({{term:term, results:results, logged_in:loggedIn,
+                                 source:(onShop?'shop':'site')}});
     var url="{url}/search-log";
     if(navigator.sendBeacon){{navigator.sendBeacon(url, payload);}}
     else{{fetch(url,{{method:'POST',body:payload,keepalive:true}});}}
