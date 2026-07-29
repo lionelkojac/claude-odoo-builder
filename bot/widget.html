@@ -185,9 +185,10 @@ function typing(on){
   } else if(!on && t){ t.remove(); }
 }
 
-const WELCOME = "Welcome, Welkom, Wilkommen, Bienvenido.\n\n"
+const WELCOME = "Welcome,\n\n"
   + "I can help you find the right Kerger product — tell me what you're looking "
   + "for, or give me a Kerger number, IMPA/ISSA code or manufacturer type. "
+  + "I can help finding the product or offering an alternative. "
   + "You may use your preferred language.";
 if (state.msgs.length) {
   state.msgs.forEach(m => draw(m.role, m.text));   // replay prior conversation
