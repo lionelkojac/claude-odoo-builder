@@ -27,14 +27,21 @@ import time
 import uuid
 from threading import Lock
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from kerger_bot import Conversation
 from kerger_lead import send_enquiry
+import store
 
 HERE = os.path.dirname(__file__)
 
+# Dashboard is protected by HTTP basic auth. Set DASHBOARD_PASSWORD in the env to
+# enable /dashboard; without it the route returns 503 (never open by accident).
+DASHBOARD_USER = os.getenv("DASHBOARD_USER", "kerger")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+
 app = Flask(__name__)
+store.init()
 
 # Which website origins may call /chat from the browser. The widget is embedded
 # on the Kerger site, a different origin from this backend, so the browser sends
@@ -149,6 +156,8 @@ def chat():
         return jsonify(error="advisor temporarily unavailable",
                        detail=str(e)[:200]), 502
 
+    store.log_chat(session_id, "user", message, entry["convo"].model)
+    store.log_chat(session_id, "assistant", reply, entry["convo"].model)
     return jsonify(session_id=session_id, reply=reply)
 
 
@@ -183,7 +192,149 @@ def lead():
         app.logger.exception("lead error")
         return jsonify(error="could not send to Kerger", detail=str(e)[:200]), 502
 
+    store.log_chat(session_id, "lead", "conversation sent to sales")
     return jsonify(ok=True)
+
+
+@app.route("/search-log", methods=["POST", "OPTIONS"])
+def search_log():
+    """Record a shop (or chat) search term + result count. Called from the Odoo
+    shop via navigator.sendBeacon (fire-and-forget, no CORS pre-flight)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    import json
+    try:
+        data = json.loads(request.get_data() or b"{}")
+    except Exception:
+        data = request.get_json(silent=True) or {}
+    term = (data.get("term") or "").strip()
+    if not term or len(term) > 500:
+        return ("", 204)
+    results = data.get("results")
+    results = int(results) if isinstance(results, (int, float)) else None
+    store.log_search(term, results=results, logged_in=data.get("logged_in"),
+                     source=(data.get("source") or "shop"))
+    return ("", 204)
+
+
+def _dash_auth():
+    a = request.authorization
+    return (DASHBOARD_PASSWORD and a and a.username == DASHBOARD_USER
+            and a.password == DASHBOARD_PASSWORD)
+
+
+@app.route("/dashboard")
+def dashboard():
+    if not DASHBOARD_PASSWORD:
+        return ("Dashboard disabled — set DASHBOARD_PASSWORD in the environment.", 503)
+    if not _dash_auth():
+        return Response("Authentication required", 401,
+                        {"WWW-Authenticate": 'Basic realm="Kerger insights"'})
+    if not store.enabled():
+        return ("No database connected — add a Postgres database on Railway "
+                "(it sets DATABASE_URL) and reload.", 200)
+    try:
+        days = max(1, min(int(request.args.get("days", 30)), 365))
+    except ValueError:
+        days = 30
+    return render_dashboard(store.dashboard_data(days))
+
+
+def render_dashboard(d):
+    import html
+    def esc(s):
+        return html.escape("" if s is None else str(s))
+
+    chat = d.get("chat") or {}
+    search = d.get("search") or {}
+    days = d.get("days", 30)
+
+    def tiles(items):
+        cells = "".join(
+            f'<div class="tile"><div class="n">{esc(v if v is not None else 0)}</div>'
+            f'<div class="l">{esc(lbl)}</div></div>' for lbl, v in items)
+        return f'<div class="tiles">{cells}</div>'
+
+    def barlist(rows, unit=""):
+        if not rows:
+            return '<p class="empty">No data yet.</p>'
+        mx = max((r[1] or 0) for r in rows) or 1
+        out = []
+        for r in rows:
+            term, cnt = esc(r[0]), (r[1] or 0)
+            extra = ""
+            if len(r) > 2 and r[2] == 0:
+                extra = ' <span class="zero">0 results</span>'
+            out.append(
+                f'<div class="row"><div class="lab">{term}{extra}</div>'
+                f'<div class="track"><div class="fill" style="width:{cnt/mx*100:.1f}%"></div></div>'
+                f'<div class="cnt">{cnt}{esc(unit)}</div></div>')
+        return '<div class="bars">' + "".join(out) + "</div>"
+
+    def daychart(rows):
+        if not rows:
+            return '<p class="empty">No data yet.</p>'
+        mx = max((r[1] or 0) for r in rows) or 1
+        cols = "".join(
+            f'<div class="col" title="{esc(r[0])}: {r[1]}">'
+            f'<div class="cbar" style="height:{max(3,(r[1] or 0)/mx*100):.0f}%"></div></div>'
+            for r in rows)
+        return f'<div class="days">{cols}</div>'
+
+    questions = "".join(f"<li>{esc(q)}</li>" for q in d.get("recent_questions", [])) \
+        or "<li class='empty'>No questions yet.</li>"
+
+    nav = " · ".join(
+        f'<a href="?days={n}"{" class=cur" if n==days else ""}>{n}d</a>'
+        for n in (7, 30, 90))
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kerger insights</title><style>
+  :root{{--navy:#0B2942;--blue:#00B9F2;--ink:#0B1B26;--paper:#F4F7F9;--line:#E2E9EE;--muted:#5C6E7A}}
+  *{{box-sizing:border-box}} body{{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--paper);color:var(--ink)}}
+  header{{background:var(--navy);color:#fff;padding:18px 26px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}}
+  header h1{{font-size:17px;margin:0;font-weight:700;letter-spacing:.02em}}
+  header .sub{{font-size:12px;opacity:.7}} header nav a{{color:#cddbe6;text-decoration:none;font-size:13px;margin-left:6px}}
+  header nav a.cur{{color:#fff;font-weight:700;border-bottom:2px solid var(--blue)}}
+  main{{max-width:960px;margin:0 auto;padding:22px 20px 60px}}
+  h2{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:30px 0 12px}}
+  .tiles{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}
+  .tile{{background:#fff;border:1px solid var(--line);border-radius:9px;padding:16px 18px}}
+  .tile .n{{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}}
+  .tile .l{{font-size:12px;color:var(--muted);margin-top:3px}}
+  .panel{{background:#fff;border:1px solid var(--line);border-radius:9px;padding:18px 20px;margin-top:12px}}
+  .bars .row{{display:grid;grid-template-columns:1fr 130px 46px;align-items:center;gap:12px;padding:4px 0}}
+  .bars .lab{{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+  .bars .track{{background:#eef2f5;border-radius:5px;height:9px;overflow:hidden}}
+  .bars .fill{{background:var(--blue);height:100%}}
+  .bars .cnt{{text-align:right;font-variant-numeric:tabular-nums;font-size:12px;color:var(--muted)}}
+  .zero{{color:#c26a00;font-size:11px;font-weight:600}}
+  .days{{display:flex;align-items:flex-end;gap:3px;height:70px}}
+  .days .col{{flex:1;display:flex;align-items:flex-end}} .days .cbar{{width:100%;background:var(--blue);border-radius:2px 2px 0 0;opacity:.85}}
+  ul.q{{list-style:none;margin:0;padding:0}} ul.q li{{font-size:13px;padding:6px 0;border-bottom:1px solid #eef2f5}}
+  .empty{{color:var(--muted);font-size:13px}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+  @media(max-width:640px){{.tiles{{grid-template-columns:1fr 1fr}}.grid2{{grid-template-columns:1fr}}.bars .row{{grid-template-columns:1fr 80px 40px}}}}
+</style></head><body>
+<header><div><h1>Kerger insights</h1><div class="sub">Advisor chat &amp; shop search · last {days} days</div></div>
+  <nav>{nav}</nav></header>
+<main>
+  <h2>AI advisor</h2>
+  {tiles([("Conversations", chat.get("conversations")), ("Messages", chat.get("messages")),
+          ("Visitor questions", chat.get("questions")), ("Sent to sales", chat.get("leads"))])}
+  <div class="panel"><h2 style="margin-top:0">Conversations per day</h2>{daychart(d.get("chat_by_day"))}</div>
+  <div class="panel"><h2 style="margin-top:0">Recent visitor questions</h2><ul class="q">{questions}</ul></div>
+
+  <h2>Shop &amp; chat search</h2>
+  {tiles([("Searches", search.get("total")), ("No-result searches", search.get("zero")),
+          ("Distinct top terms", len(d.get("top_terms", []))), ("", "")])}
+  <div class="grid2">
+    <div class="panel"><h2 style="margin-top:0">Top search terms</h2>{barlist(d.get("top_terms"))}</div>
+    <div class="panel"><h2 style="margin-top:0">Searches with no results <span class="zero">demand gaps</span></h2>{barlist(d.get("zero_terms"))}</div>
+  </div>
+  <div class="panel"><h2 style="margin-top:0">Searches per day</h2>{daychart(d.get("search_by_day"))}</div>
+</main></body></html>"""
 
 
 if __name__ == "__main__":
