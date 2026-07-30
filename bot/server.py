@@ -45,6 +45,10 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
 # override with the REPORT_EMAIL env var on Railway (e.g. a sales alias).
 REPORT_EMAIL = os.getenv("REPORT_EMAIL", "lionelkaptein@gmail.com")
 
+# Monthly AI report generation is OFF unless REPORTS_ENABLED=true. When off,
+# nothing calls the model — no auto-generation, scheduler, or manual generate.
+REPORTS_ENABLED = os.getenv("REPORTS_ENABLED", "").lower() in ("1", "true", "yes")
+
 app = Flask(__name__)
 store.init()
 
@@ -325,6 +329,8 @@ def _generate_month(month_str, year, month):
 
 def _kickoff(month_str, year, month):
     """Claim + generate a month in the background (once, across workers)."""
+    if not REPORTS_ENABLED:
+        return False
     if store.claim_report(month_str):
         Thread(target=_generate_month, args=(month_str, year, month), daemon=True).start()
         return True
@@ -364,8 +370,7 @@ def report_page():
         y, m, month = _prev_month()
     rep = store.get_report(month)
     if rep is None:
-        _kickoff(month, y, m)
-        rep = {"status": "generating"}
+        rep = {"status": "generating" if _kickoff(month, y, m) else "disabled"}
     return render_report(month, rep, store.list_reports())
 
 
@@ -391,7 +396,11 @@ def render_report(month, rep, months):
     def esc(s):
         return html.escape("" if s is None else str(s))
     status = rep.get("status")
-    if status == "generating" or not rep.get("content"):
+    if status == "disabled":
+        body = ('<div class="gen"><h2>Monthly reports are paused</h2>'
+                '<p>Report generation is turned off. Set '
+                '<code>REPORTS_ENABLED=true</code> in the environment to resume.</p></div>')
+    elif status == "generating" or not rep.get("content"):
         body = ('<div class="gen"><h2>Preparing the report for '
                 f'{esc(month)}…</h2><p>This takes up to a minute. '
                 '<a href="">refresh</a> shortly.</p></div>')
@@ -537,7 +546,7 @@ def _scheduler():
         time.sleep(6 * 3600)
 
 
-if store.enabled():
+if store.enabled() and REPORTS_ENABLED:
     Thread(target=_scheduler, daemon=True).start()
 
 
