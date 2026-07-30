@@ -22,16 +22,18 @@ Production (Railway uses the Procfile):
     gunicorn -w 2 -b 0.0.0.0:$PORT bot.server:app
 """
 
+import datetime
 import os
 import time
 import uuid
-from threading import Lock
+from threading import Lock, Thread
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from kerger_bot import Conversation
 from kerger_lead import send_enquiry
 import store
+import report
 
 HERE = os.path.dirname(__file__)
 
@@ -39,6 +41,7 @@ HERE = os.path.dirname(__file__)
 # enable /dashboard; without it the route returns 503 (never open by accident).
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "kerger")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
+REPORT_EMAIL = os.getenv("REPORT_EMAIL")   # optional: email each monthly report
 
 app = Flask(__name__)
 store.init()
@@ -233,11 +236,192 @@ def dashboard():
     if not store.enabled():
         return ("No database connected — add a Postgres database on Railway "
                 "(it sets DATABASE_URL) and reload.", 200)
+    _autogenerate_due()   # lazily kick off last month's report if it's due
     try:
         days = max(1, min(int(request.args.get("days", 30)), 365))
     except ValueError:
         days = 30
     return render_dashboard(store.dashboard_data(days))
+
+
+def _md_to_html(text):
+    """Minimal, safe Markdown -> HTML for the AI report (escape first)."""
+    import html
+    import re
+    def inline(s):
+        s = html.escape(s)
+        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        return s
+    out, mode = [], None
+    for raw in (text or "").split("\n"):
+        t = raw.rstrip()
+        if re.match(r"^#{1,6} ", t):
+            if mode:
+                out.append(f"</{mode}>"); mode = None
+            lvl = len(t) - len(t.lstrip("#"))
+            out.append(f"<h{lvl}>{inline(t.lstrip('# ').strip())}</h{lvl}>")
+        elif re.match(r"^\s*\d+\.\s+", t):
+            if mode != "ol":
+                if mode: out.append(f"</{mode}>")
+                out.append("<ol>"); mode = "ol"
+            item = re.sub(r"^\s*\d+\.\s+", "", t)
+            out.append(f"<li>{inline(item)}</li>")
+        elif re.match(r"^\s*[-*]\s+", t):
+            if mode != "ul":
+                if mode: out.append(f"</{mode}>")
+                out.append("<ul>"); mode = "ul"
+            item = re.sub(r"^\s*[-*]\s+", "", t)
+            out.append(f"<li>{inline(item)}</li>")
+        elif t.strip() == "":
+            if mode: out.append(f"</{mode}>"); mode = None
+        else:
+            if mode: out.append(f"</{mode}>"); mode = None
+            out.append(f"<p>{inline(t)}</p>")
+    if mode:
+        out.append(f"</{mode}>")
+    return "\n".join(out)
+
+
+def _prev_month(ref=None):
+    ref = ref or datetime.date.today()
+    y, m = (ref.year, ref.month - 1) if ref.month > 1 else (ref.year - 1, 12)
+    return y, m, f"{y}-{m:02d}"
+
+
+def _email_report(month, md):
+    if not REPORT_EMAIL:
+        return
+    try:
+        from kerger_query import client
+        c = client()
+        c._execute_kw("mail.mail", "create", [{
+            "subject": f"Kerger — website insights report {month}",
+            "email_to": REPORT_EMAIL,
+            "body_html": _md_to_html(md)}], {})
+        ids = c._execute_kw("mail.mail", "search",
+                            [[["subject", "ilike", f"insights report {month}"]]],
+                            {"limit": 1})
+        if ids:
+            c._execute_kw("mail.mail", "send", [ids], {})
+    except Exception:
+        app.logger.exception("report email failed")
+
+
+def _generate_month(month_str, year, month):
+    try:
+        content = report.generate(store.report_dataset(year, month))
+        store.save_report(month_str, content)
+        _email_report(month_str, content)
+    except Exception:
+        app.logger.exception("report generation failed")
+        store.save_report(month_str, "_Report generation failed — try Generate again._")
+
+
+def _kickoff(month_str, year, month):
+    """Claim + generate a month in the background (once, across workers)."""
+    if store.claim_report(month_str):
+        Thread(target=_generate_month, args=(month_str, year, month), daemon=True).start()
+        return True
+    return False
+
+
+def _autogenerate_due():
+    """Ensure last month's report exists (the monthly automation). Skips months
+    that had no activity so empty reports aren't generated/emailed."""
+    if not store.enabled():
+        return
+    y, m, ms = _prev_month()
+    if store.get_report(ms) is not None:
+        return
+    ds = store.report_dataset(y, m)
+    if ds["this_month"]["searches"] == 0 and ds["this_month"]["questions"] == 0:
+        return
+    _kickoff(ms, y, m)
+
+
+@app.route("/report")
+def report_page():
+    if not DASHBOARD_PASSWORD:
+        return ("Reports disabled — set DASHBOARD_PASSWORD in the environment.", 503)
+    if not _dash_auth():
+        return Response("Authentication required", 401,
+                        {"WWW-Authenticate": 'Basic realm="Kerger insights"'})
+    if not store.enabled():
+        return ("No database connected — add a Postgres database on Railway.", 200)
+
+    month = request.args.get("month")
+    if not month:
+        _, _, month = _prev_month()
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+    except (ValueError, IndexError):
+        y, m, month = _prev_month()
+    rep = store.get_report(month)
+    if rep is None:
+        _kickoff(month, y, m)
+        rep = {"status": "generating"}
+    return render_report(month, rep, store.list_reports())
+
+
+@app.route("/report/generate", methods=["POST"])
+def report_generate():
+    if not DASHBOARD_PASSWORD or not _dash_auth():
+        return Response("Authentication required", 401,
+                        {"WWW-Authenticate": 'Basic realm="Kerger insights"'})
+    month = (request.form.get("month") or request.args.get("month") or "").strip()
+    if not month:
+        _, _, month = _prev_month()
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+    except (ValueError, IndexError):
+        return ("bad month", 400)
+    store.delete_report(month)          # force regenerate
+    _kickoff(month, y, m)
+    return Response("", 303, {"Location": f"/report?month={month}"})
+
+
+def render_report(month, rep, months):
+    import html
+    def esc(s):
+        return html.escape("" if s is None else str(s))
+    status = rep.get("status")
+    if status == "generating" or not rep.get("content"):
+        body = ('<div class="gen"><h2>Preparing the report for '
+                f'{esc(month)}…</h2><p>This takes up to a minute. '
+                '<a href="">refresh</a> shortly.</p></div>')
+    else:
+        gen = rep.get("generated_at")
+        body = (f'<div class="meta">Generated {esc(str(gen)[:16])}'
+                f' · <form method="post" action="/report/generate?month={esc(month)}"'
+                ' style="display:inline"><button>Regenerate</button></form></div>'
+                f'<article class="report">{_md_to_html(rep.get("content"))}</article>')
+    picker = "".join(
+        f'<a href="/report?month={esc(r[0])}"{" class=cur" if r[0]==month else ""}>{esc(r[0])}</a>'
+        for r in months) or '<span class="muted">no reports yet</span>'
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kerger monthly report</title><style>
+  :root{{--navy:#0B2942;--blue:#00B9F2;--ink:#0B1B26;--paper:#F4F7F9;--line:#E2E9EE;--muted:#5C6E7A}}
+  *{{box-sizing:border-box}} body{{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--paper);color:var(--ink)}}
+  header{{background:var(--navy);color:#fff;padding:18px 26px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center}}
+  header h1{{font-size:17px;margin:0}} header a{{color:#cddbe6;text-decoration:none;font-size:13px;margin-left:12px}}
+  .months{{max-width:820px;margin:16px auto 0;padding:0 20px;display:flex;gap:8px;flex-wrap:wrap}}
+  .months a{{font-size:12px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:#fff}}
+  .months a.cur{{background:var(--navy);color:#fff;border-color:var(--navy)}}
+  main{{max-width:820px;margin:0 auto;padding:14px 20px 70px}}
+  .meta{{font-size:12px;color:var(--muted);margin:10px 0 6px}} .meta button{{font-size:12px;cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 9px}}
+  .report{{background:#fff;border:1px solid var(--line);border-radius:10px;padding:26px 30px}}
+  .report h2{{font-size:19px;margin:22px 0 8px;color:var(--navy)}} .report h2:first-child{{margin-top:0}}
+  .report h3{{font-size:15px;margin:16px 0 6px}} .report p{{line-height:1.6;font-size:14.5px;margin:8px 0}}
+  .report ul,.report ol{{padding-left:22px;line-height:1.6;font-size:14.5px}} .report li{{margin:4px 0}}
+  .report code{{background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:13px}}
+  .report strong{{color:var(--navy)}}
+  .gen{{background:#fff;border:1px solid var(--line);border-radius:10px;padding:40px;text-align:center;color:var(--muted)}}
+</style><meta http-equiv="refresh" content="{'20' if status=='generating' else '99999'}"></head><body>
+<header><h1>Kerger · monthly insights report</h1><nav><a href="/dashboard">← Live dashboard</a></nav></header>
+<div class="months">{picker}</div>
+<main>{body}</main></body></html>"""
 
 
 def render_dashboard(d):
@@ -318,7 +502,7 @@ def render_dashboard(d):
   @media(max-width:640px){{.tiles{{grid-template-columns:1fr 1fr}}.grid2{{grid-template-columns:1fr}}.bars .row{{grid-template-columns:1fr 80px 40px}}}}
 </style></head><body>
 <header><div><h1>Kerger insights</h1><div class="sub">Advisor chat &amp; shop search · last {days} days</div></div>
-  <nav>{nav}</nav></header>
+  <nav><a href="/report" style="color:#fff;font-weight:700;margin-right:16px">Monthly AI report →</a>{nav}</nav></header>
 <main>
   <h2>AI advisor</h2>
   {tiles([("Conversations", chat.get("conversations")), ("Messages", chat.get("messages")),
@@ -335,6 +519,21 @@ def render_dashboard(d):
   </div>
   <div class="panel"><h2 style="margin-top:0">Searches per day</h2>{daychart(d.get("search_by_day"))}</div>
 </main></body></html>"""
+
+
+def _scheduler():
+    """Wake periodically and generate last month's report when it's due.
+    claim_report() makes this safe across multiple gunicorn workers."""
+    while True:
+        try:
+            _autogenerate_due()
+        except Exception:
+            pass
+        time.sleep(6 * 3600)
+
+
+if store.enabled():
+    Thread(target=_scheduler, daemon=True).start()
 
 
 if __name__ == "__main__":

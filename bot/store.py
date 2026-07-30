@@ -59,6 +59,9 @@ def init():
                     source TEXT DEFAULT 'shop')""")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_messages(ts)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_search_ts ON searches(ts)")
+                cur.execute("""CREATE TABLE IF NOT EXISTS reports(
+                    month TEXT PRIMARY KEY, status TEXT,
+                    content TEXT, generated_at TIMESTAMPTZ DEFAULT now())""")
             _init_done = True
         except Exception:
             pass
@@ -167,3 +170,87 @@ def dashboard_data(days=30):
         """SELECT to_char(date_trunc('day',ts),'YYYY-MM-DD'), count(*)
            FROM searches WHERE ts >= %s GROUP BY 1 ORDER BY 1""", (since,))
     return d
+
+
+# ---------------- monthly AI report ----------------
+
+def _month_bounds(year, month):
+    start = datetime.datetime(year, month, 1)
+    nxt = datetime.datetime(year + (month == 12), (month % 12) + 1, 1)
+    return start, nxt
+
+
+def report_dataset(year, month, question_sample=80):
+    """Everything the AI report needs for one calendar month, plus the previous
+    month's headline totals for trend."""
+    start, nxt = _month_bounds(year, month)
+    pstart, _ = _month_bounds(year - (month == 1), (month - 2) % 12 + 1)
+
+    def totals(a, b):
+        s = _rows("""SELECT count(*), count(*) FILTER (WHERE results=0)
+                     FROM searches WHERE ts >= %s AND ts < %s""", (a, b))
+        c = _rows("""SELECT count(DISTINCT session_id),
+                            count(*) FILTER (WHERE role='user'),
+                            count(*) FILTER (WHERE role='lead')
+                     FROM chat_messages WHERE ts >= %s AND ts < %s""", (a, b))
+        return {"searches": (s[0][0] if s else 0), "zero": (s[0][1] if s else 0),
+                "conversations": (c[0][0] if c else 0),
+                "questions": (c[0][1] if c else 0), "leads": (c[0][2] if c else 0)}
+
+    d = {"period": f"{year}-{month:02d}",
+         "this_month": totals(start, nxt), "prev_month": totals(pstart, start)}
+    d["top_terms"] = _rows(
+        """SELECT lower(term), count(*), min(coalesce(results,-1))
+           FROM searches WHERE ts >= %s AND ts < %s GROUP BY 1
+           ORDER BY 2 DESC LIMIT 40""", (start, nxt))
+    d["zero_terms"] = _rows(
+        """SELECT lower(term), count(*) FROM searches
+           WHERE ts >= %s AND ts < %s AND results=0 GROUP BY 1
+           ORDER BY 2 DESC LIMIT 40""", (start, nxt))
+    d["questions"] = [x[0] for x in _rows(
+        """SELECT content FROM chat_messages WHERE role='user'
+           AND ts >= %s AND ts < %s ORDER BY ts DESC LIMIT %s""",
+        (start, nxt, question_sample))]
+    return d
+
+
+def claim_report(month):
+    """Atomically claim generation of `month` (YYYY-MM). True if we won the race
+    (row newly inserted); False if it already exists — avoids duplicate work
+    across gunicorn workers."""
+    if not enabled():
+        return False
+    try:
+        with _conn() as c, c.cursor() as cur:
+            cur.execute("INSERT INTO reports(month,status) VALUES(%s,'generating') "
+                        "ON CONFLICT (month) DO NOTHING", (month,))
+            return cur.rowcount == 1
+    except Exception:
+        return False
+
+
+def save_report(month, content):
+    try:
+        with _conn() as c, c.cursor() as cur:
+            cur.execute("UPDATE reports SET content=%s, status='done', "
+                        "generated_at=now() WHERE month=%s", (content, month))
+    except Exception:
+        pass
+
+
+def delete_report(month):
+    try:
+        with _conn() as c, c.cursor() as cur:
+            cur.execute("DELETE FROM reports WHERE month=%s", (month,))
+    except Exception:
+        pass
+
+
+def get_report(month):
+    r = _rows("SELECT month, content, status, generated_at FROM reports WHERE month=%s",
+              (month,))
+    return dict(zip(("month", "content", "status", "generated_at"), r[0])) if r else None
+
+
+def list_reports():
+    return _rows("SELECT month, status, generated_at FROM reports ORDER BY month DESC")
