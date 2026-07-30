@@ -6,19 +6,21 @@ CSV columns (detected by header):
   Kerger number, Name, EAN, Catalogue picture 1, Catalogue picture 2,
   Document 1 .. Document 4
 
-Per matched product:
-  - "Catalogue picture 1"  -> main product image (image_1920), only if the
-    product has none (use --overwrite-image to replace).
-  - "Catalogue picture 2"  -> an extra gallery image (product.image).
-  - "Document N" (any)     -> a product.document shown on the product page
-    (spec sheet, etc.). Skipped if a document of the same name already exists.
-
-Idempotent and safe: never removes anything; skips values already present.
+These CSVs contain only the products that need NEW media, so by default the
+tool OVERWRITES. Per matched product:
+  - "Catalogue picture 1"  -> main product image (image_1920). Replaces any
+    existing image (pass --keep-existing-image to skip products that already
+    have one).
+  - "Catalogue picture 2"  -> an extra gallery image (product.image), added
+    unless one with the same filename already exists (no duplicates on re-run).
+  - "Document N" (any)     -> a product.document shown on the product page. A
+    document with the same filename is REPLACED (updated); a new filename is
+    added.
 
 Usage:
   python3 tools/import_product_media.py --file media.csv --dry-run
   python3 tools/import_product_media.py --file media.csv --apply
-  python3 tools/import_product_media.py --file media.csv --apply --overwrite-image
+  python3 tools/import_product_media.py --file media.csv --apply --keep-existing-image
 """
 
 import argparse
@@ -66,8 +68,9 @@ def load(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True)
-    ap.add_argument("--overwrite-image", action="store_true",
-                    help="replace the main image even if the product already has one")
+    ap.add_argument("--keep-existing-image", action="store_true",
+                    help="do NOT overwrite a main image that already exists "
+                         "(default: overwrite, since the CSV holds only new pictures)")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true")
     g.add_argument("--apply", action="store_true")
@@ -96,7 +99,7 @@ def main():
             continue
         p = byc[code]
         p1 = (r.get(PIC_COLS[0]) or "").strip()
-        if p1.startswith("http") and (args.overwrite_image or not p["image_1920"]):
+        if p1.startswith("http") and not (args.keep_existing_image and p["image_1920"]):
             plan_main.append((p["id"], code, p1))
         p2 = (r.get(PIC_COLS[1]) or "").strip()
         if p2.startswith("http"):
@@ -117,16 +120,22 @@ def main():
         print("\n(dry-run — nothing written)")
         return
 
-    # existing docs per product (idempotency by name)
-    existing = {}
+    ids = [p["id"] for p in prods]
+    # existing product.documents keyed by (product, filename) -> [doc ids],
+    # so a same-name document can be REPLACED (updated), not skipped.
+    existing_docs = {}
     for d in c._execute_kw("product.document", "search_read",
-            [[["res_model", "=", "product.template"],
-              ["res_id", "in", [p["id"] for p in prods]]]],
-            {"fields": ["res_id", "name"]}):
-        existing.setdefault(d["res_id"], set()).add(d["name"])
+            [[["res_model", "=", "product.template"], ["res_id", "in", ids]]],
+            {"fields": ["id", "res_id", "name"]}):
+        existing_docs.setdefault((d["res_id"], d["name"]), []).append(d["id"])
+    # existing gallery image names per product -> skip duplicate extra images
+    existing_imgs = {}
+    for im in c._execute_kw("product.image", "search_read",
+            [[["product_tmpl_id", "in", ids]]], {"fields": ["product_tmpl_id", "name"]}):
+        existing_imgs.setdefault(im["product_tmpl_id"][0], set()).add(im["name"])
 
     img_ok = extra_ok = doc_ok = fail = 0
-    for pid, code, u in plan_main:
+    for pid, code, u in plan_main:          # overwrite the main image
         try:
             data, _ = fetch(u)
             c._execute_kw("product.template", "write",
@@ -134,19 +143,28 @@ def main():
             img_ok += 1
         except Exception as e:
             fail += 1; print(f"  ! main {code}: {str(e)[:70]}")
-    for pid, code, u in plan_extra:
+    for pid, code, u in plan_extra:         # add gallery image unless already present
+        name = filename_from_url(u, code)
+        if name in existing_imgs.get(pid, set()):
+            continue
         try:
             data, _ = fetch(u)
             c._execute_kw("product.image", "create", [{
-                "name": filename_from_url(u, code), "product_tmpl_id": pid,
+                "name": name, "product_tmpl_id": pid,
                 "image_1920": base64.b64encode(data).decode()}], {})
+            existing_imgs.setdefault(pid, set()).add(name)
             extra_ok += 1
         except Exception as e:
             fail += 1; print(f"  ! extra {code}: {str(e)[:70]}")
-    for pid, code, u in plan_doc:
+    for pid, code, u in plan_doc:           # replace same-name doc, else add
         name = filename_from_url(u, f"{code}.pdf")
-        if name in existing.get(pid, set()):
-            continue
+        old = existing_docs.get((pid, name))
+        if old:
+            try:
+                c._execute_kw("product.document", "unlink", [old], {})  # cascades attachment
+            except Exception:
+                pass
+            existing_docs[(pid, name)] = []
         try:
             data, mime = fetch(u)
             # standalone attachment (no res_model) — the product.document below
