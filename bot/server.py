@@ -41,7 +41,9 @@ HERE = os.path.dirname(__file__)
 # enable /dashboard; without it the route returns 503 (never open by accident).
 DASHBOARD_USER = os.getenv("DASHBOARD_USER", "kerger")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD")
-REPORT_EMAIL = os.getenv("REPORT_EMAIL")   # optional: email each monthly report
+# Email each monthly report here. Defaults to the Kerger company address;
+# override with the REPORT_EMAIL env var on Railway (e.g. a sales alias).
+REPORT_EMAIL = os.getenv("REPORT_EMAIL", "lionelkaptein@gmail.com")
 
 app = Flask(__name__)
 store.init()
@@ -295,15 +297,18 @@ def _email_report(month, md):
     try:
         from kerger_query import client
         c = client()
+        # create the outgoing mail; Odoo's mail queue delivers it (calling
+        # .send() over RPC returns no result and isn't needed).
         c._execute_kw("mail.mail", "create", [{
             "subject": f"Kerger — website insights report {month}",
             "email_to": REPORT_EMAIL,
-            "body_html": _md_to_html(md)}], {})
-        ids = c._execute_kw("mail.mail", "search",
-                            [[["subject", "ilike", f"insights report {month}"]]],
-                            {"limit": 1})
-        if ids:
-            c._execute_kw("mail.mail", "send", [ids], {})
+            "body_html": _md_to_html(md),
+            "auto_delete": False}], {})
+        # push the queue so it sends now (this RPC returns no result -> ignore)
+        try:
+            c._execute_kw("mail.mail", "process_email_queue", [], {})
+        except Exception:
+            pass
     except Exception:
         app.logger.exception("report email failed")
 
