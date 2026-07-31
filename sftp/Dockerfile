@@ -19,4 +19,11 @@ RUN chmod +x /app/start.sh
 # SFTP listens here inside the container; point Railway's TCP proxy at this port.
 ENV SFTP_PORT=2222
 EXPOSE 2222
-CMD ["/app/start.sh"]
+
+# ENTRYPOINT (not CMD): Railway's start command overrides a Docker image's CMD
+# but never its ENTRYPOINT. So even if this service inherits the chatbot's root
+# railway.json/Procfile "gunicorn …" start command, that string is passed as
+# harmless *arguments* to start.sh (which ignores positional args) instead of
+# replacing it — the "executable gunicorn could not be found" failure can no
+# longer happen no matter how the Railway service is configured.
+ENTRYPOINT ["/app/start.sh"]

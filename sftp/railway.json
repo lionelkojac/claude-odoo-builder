@@ -5,7 +5,6 @@
     "dockerfilePath": "sftp/Dockerfile"
   },
   "deploy": {
-    "startCommand": "/app/start.sh",
     "restartPolicyType": "ON_FAILURE"
   }
 }
