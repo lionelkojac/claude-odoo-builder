@@ -16,6 +16,10 @@ Kerridge ERP ──SFTP──▶  this service (sshd + poller)  ──Odoo RPC�
    alongside the chatbot.
 2. In that service's **Settings**:
    - **Build → Dockerfile Path**: `sftp/Dockerfile` (root directory stays the repo root).
+   - **Deploy → Custom Start Command**: `/app/start.sh`  ← **required.** The repo's
+     `railway.json`/`Procfile` set `gunicorn …` for the chatbot service; without
+     this override the SFTP service inherits it and fails with
+     *"executable `gunicorn` could not be found"*.
    - **Volumes → New Volume**, mount path **`/data`** (persists host keys + files).
    - **Networking → TCP Proxy → Add** on target port **`2222`**. Railway returns a
      host + external port, e.g. `containers-xxx.railway.app : 43210`. **That
