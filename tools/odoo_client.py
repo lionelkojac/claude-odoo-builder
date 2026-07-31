@@ -84,7 +84,9 @@ class OdooClient:
             err = body["error"]
             msg = err.get("data", {}).get("message") or err.get("message", str(err))
             raise RuntimeError(f"Odoo error: {msg}")
-        return body["result"]
+        # Some methods (action_apply_inventory, mail send, ...) return no value;
+        # JSON-RPC then omits/nulls "result". Return None rather than KeyError.
+        return body.get("result")
 
     def _execute_kw(self, model, method, args, kwargs=None):
         if self.uid is None:
