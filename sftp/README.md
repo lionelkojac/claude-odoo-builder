@@ -15,11 +15,14 @@ Kerridge ERP ──SFTP──▶  this service (sshd + poller)  ──Odoo RPC�
 1. **New → Deploy from GitHub repo** → same repo → this becomes a second service
    alongside the chatbot.
 2. In that service's **Settings**:
-   - **Build → Dockerfile Path**: `sftp/Dockerfile` (root directory stays the repo root).
-   - **Deploy → Custom Start Command**: `/app/start.sh`  ← **required.** The repo's
-     `railway.json`/`Procfile` set `gunicorn …` for the chatbot service; without
-     this override the SFTP service inherits it and fails with
-     *"executable `gunicorn` could not be found"*.
+   - **Config → Railway Config File**: `sftp/railway.json`  ← **the one setting that
+     matters.** The repo root `railway.json` is the *chatbot's* config — it forces a
+     Nixpacks build, a `gunicorn …` start command, and a `/health` healthcheck. An
+     SFTP container has none of those, so inheriting it fails the deploy twice over
+     (*"executable `gunicorn` could not be found"*, then a healthcheck timeout on a
+     port with no web server). Pointing this service at its own `sftp/railway.json`
+     makes it build from `sftp/Dockerfile`, start with `/app/start.sh`, and skip the
+     healthcheck — no other Build/Deploy overrides needed.
    - **Volumes → New Volume**, mount path **`/data`** (persists host keys + files).
    - **Networking → TCP Proxy → Add** on target port **`2222`**. Railway returns a
      host + external port, e.g. `containers-xxx.railway.app : 43210`. **That
