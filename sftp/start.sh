@@ -46,9 +46,15 @@ Match User $SFTP_USER
 EOF
 
 echo "===================================================================="
-echo " SFTP host key fingerprints — enter one in the ERP 'Fingerprint' box:"
-ssh-keygen -lf "$DATA/ssh/ssh_host_ed25519_key.pub" || true
+echo " SFTP host key fingerprints — enter one in the ERP 'Fingerprint' box."
+echo " Most ERPs (incl. Kerridge) want the RSA key; use SHA256 if offered,"
+echo " else the MD5 colon-hex line."
+echo " -- RSA (pick this if the ERP only lists DSA/RSA) --"
 ssh-keygen -lf "$DATA/ssh/ssh_host_rsa_key.pub" || true
+ssh-keygen -E md5 -lf "$DATA/ssh/ssh_host_rsa_key.pub" || true
+echo " -- ED25519 --"
+ssh-keygen -lf "$DATA/ssh/ssh_host_ed25519_key.pub" || true
+ssh-keygen -E md5 -lf "$DATA/ssh/ssh_host_ed25519_key.pub" || true
 echo " user=$SFTP_USER  port(in-container)=$SFTP_PORT  upload dir=/incoming"
 echo "===================================================================="
 
