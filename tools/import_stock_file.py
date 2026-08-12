@@ -131,7 +131,11 @@ def main():
         if not p:
             unmatched += 1
             continue
-        if do_price and r["price"] is not None and abs((p["list_price"] or 0) - r["price"]) > 0.005:
+        # Only update price from a POSITIVE value. A 0/blank "Sales Price" in a
+        # bulk export means "no price in this file", not "make it free" — never
+        # let it overwrite a real price to zero.
+        if do_price and r["price"] is not None and r["price"] > 0 and \
+                abs((p["list_price"] or 0) - r["price"]) > 0.005:
             price_plan[p["id"]] = round(r["price"], 2)
         if do_status and r["avail"] is not None:
             status_plan[p["id"]] = status_of(r["min"], r["avail"])
