@@ -133,6 +133,11 @@ ODOO_USER={login_email}
 ODOO_PASSWORD=
 ```
 
+> ⚠️ If the password contains `#`, `\`, quotes, or spaces, wrap the value in
+> single quotes (`ODOO_PASSWORD='p#ss\word'`) — unquoted, dotenv treats `#` as
+> a comment start and silently truncates the value. The same truncation can
+> happen in CI/environment-variable UIs; verify the stored value's length.
+
 ---
 
 ## Step 6 — Create `CLAUDE.md`
@@ -216,7 +221,7 @@ for p in sorted(pages, key=lambda x: x['url']):
 "
 ```
 
-> ⚠️ **Odoo Online SaaS quirk:** `search_read` on `website` and `website.page` may return empty even when records exist. If you see "0 pages found" on a site that has pages, this is expected — see the note on homepage routing below.
+> ⚠️ **`limit=0` gotcha (previously misdiagnosed as a SaaS quirk):** on recent Odoo versions (confirmed on saas~19.2), passing `limit: 0` to `search_read`/`search` returns **0 rows** instead of "no limit". If a search unexpectedly returns empty, check that the call omits `limit` rather than passing `0`. The bundled `odoo_client.py` handles this by dropping falsy limit/offset kwargs.
 
 **If authentication error:** remind the user to fill in `ODOO_PASSWORD` in `.env`.
 

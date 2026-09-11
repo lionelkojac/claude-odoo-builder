@@ -14,7 +14,9 @@ import sys
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+# override=True: .env is this project's canonical credential store — it must
+# win over ambient shell variables (which some environments truncate or stale).
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 
 class OdooClient:
@@ -48,6 +50,9 @@ class OdooClient:
         self.session.headers.update({"Content-Type": "application/json"})
         self.uid = None
         self._req_id = 0
+        # True when authenticated via /jsonrpc (API key) instead of a web
+        # session — calls then go through object.execute_kw with uid+key.
+        self._rpc_mode = False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -79,11 +84,30 @@ class OdooClient:
             err = body["error"]
             msg = err.get("data", {}).get("message") or err.get("message", str(err))
             raise RuntimeError(f"Odoo error: {msg}")
-        return body["result"]
+        # Some methods (action_apply_inventory, mail send, ...) return no value;
+        # JSON-RPC then omits/nulls "result". Return None rather than KeyError.
+        return body.get("result")
 
     def _execute_kw(self, model, method, args, kwargs=None):
         if self.uid is None:
             self.authenticate()
+        if self._rpc_mode:
+            return self._post(
+                "/jsonrpc",
+                {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.db,
+                        self.uid,
+                        self.password,
+                        model,
+                        method,
+                        args,
+                        kwargs or {},
+                    ],
+                },
+            )
         return self._post(
             "/web/dataset/call_kw",
             {
@@ -99,7 +123,13 @@ class OdooClient:
     # ------------------------------------------------------------------
 
     def authenticate(self):
-        """Authenticate via /web/session/authenticate and store uid."""
+        """Authenticate and store uid.
+
+        Tries /web/session/authenticate first (works with a real password).
+        If Odoo denies that, falls back to /jsonrpc common.authenticate,
+        which also accepts API keys — subsequent calls then go through
+        object.execute_kw instead of the web session.
+        """
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -121,28 +151,47 @@ class OdooClient:
             raise RuntimeError(f"HTTP error during authentication: {e}") from e
 
         body = resp.json()
-        if "error" in body:
-            err = body["error"]
-            msg = err.get("data", {}).get("message") or err.get("message", str(err))
-            raise RuntimeError(f"Authentication error: {msg}")
+        uid = None
+        if "error" not in body:
+            result = body.get("result", {})
+            uid = result.get("uid") if isinstance(result, dict) else None
 
-        result = body.get("result", {})
-        uid = result.get("uid") if isinstance(result, dict) else None
+        if uid:
+            self.uid = uid
+            # Password is no longer needed — Odoo uses session cookies from
+            # here. Clear it to reduce exposure if the object is logged or
+            # serialized.
+            self.password = None
+            return self.uid
 
+        # Web session refused — the credential may be an API key, which only
+        # works on the RPC endpoint.
+        uid = self._post(
+            "/jsonrpc",
+            {
+                "service": "common",
+                "method": "authenticate",
+                "args": [self.db, self.user, self.password, {}],
+            },
+        )
         if not uid:
             raise RuntimeError(
-                "Authentication failed — uid not returned. "
-                "Check ODOO_USER and ODOO_PASSWORD."
+                "Authentication failed on both /web/session/authenticate and "
+                "/jsonrpc. Check ODOO_USER and ODOO_PASSWORD (password or API "
+                "key) in .env."
             )
         self.uid = uid
-        # Password is no longer needed — Odoo uses session cookies from here.
-        # Clear it to reduce exposure if the object is logged or serialized.
-        self.password = None
+        self._rpc_mode = True
         return self.uid
 
     def search_read(self, model, domain=None, fields=None, limit=0, offset=0):
         """Return list of dicts matching domain."""
-        kwargs = {"fields": fields or [], "limit": limit, "offset": offset}
+        # Odoo saas~19 treats limit=0 as "return 0 rows" — omit it for "no limit"
+        kwargs = {"fields": fields or []}
+        if limit:
+            kwargs["limit"] = limit
+        if offset:
+            kwargs["offset"] = offset
         return self._execute_kw(model, "search_read", [domain or []], kwargs)
 
     def read(self, model, ids, fields=None):
@@ -151,7 +200,8 @@ class OdooClient:
 
     def search(self, model, domain=None, limit=0):
         """Return list of matching record IDs."""
-        return self._execute_kw(model, "search", [domain or []], {"limit": limit})
+        kwargs = {"limit": limit} if limit else {}
+        return self._execute_kw(model, "search", [domain or []], kwargs)
 
     def create(self, model, values):
         """Create a record. Returns new record ID."""

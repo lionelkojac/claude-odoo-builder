@@ -35,15 +35,27 @@ c.write("website", [site_id], {"custom_code_head": new_head})
 
 ---
 
-## Active CSS Blocks (19prince staging, website ID 3)
+## Active CSS Blocks (Kerger, website ID 1)
+
+> ⚠️ This DB has 5 website records; the live site is **website ID 1** ("kerger").
+> `push_css.py` targets `sites[0]` = ID 1 — correct today, but verify if websites change.
 
 | Block name | File | Scope | Purpose |
 |---|---|---|---|
-| `header` | `.tmp/header.css` | Site-wide | Solid dark navy header on all pages |
-| `shop` | `.tmp/shop.css` | `.oe_website_sale` + `#wrapwrap` | Light grid background, white product cards, blue prices |
-| `pages` | `.tmp/pages.css` | `#wrap.website_blog`, `section.s_title` | Blog light bg, title banner blueprint grid |
-| `forms` | `.tmp/forms.css` | `.s_website_form_label`, `.form-control` | Global form labels (bold/dark), inputs (`#F1F2F6` bg) |
-| `footer` | `.tmp/footer.css` | `footer#bottom` | Dark navy footer, orange accent bar, LinkedIn icon |
+| `fonts` | `.tmp/fonts.css` | `<head>` | Google Fonts import: Outfit, Inter, IBM Plex Mono |
+| `base` | `.tmp/base.css` | `#wrapwrap` | Kerger tokens, typography, links, buttons |
+| `header` | `.tmp/header.css` | `header#top` | White header, ink nav, blue hover, orange CTA |
+| `sections` | `.tmp/sections.css` | `#wrap section.o_cc1–5` | Color-combo mapping: dark→navy `#0B2942`, light→white/cool neutrals; card hover style |
+| `forms` | `.tmp/forms.css` | `.form-control`, `.s_website_form_*` | White inputs, cool borders, blue focus ring |
+| `footer` | `.tmp/footer.css` | `footer#bottom` | Brand-navy footer, blue links, orange hover |
+| `hero` | `.tmp/hero.css` | `.o_website_url_home .s_kickoff` | Homepage banner at true 16:9, no parallax crop |
+| `shop` | `.tmp/shop.css` | `.o_website_sale_products`, `.o_website_sale_product` | Product listing + detail: white cards, mono SKUs, blue price/CTA |
+
+> **Contrast (Orchid theme combos):** `o_cc1` white, `o_cc2` `#f0f2f5`, `o_cc3` tan `#e0ccaf`, `o_cc4` blue `#0A58CA`, `o_cc5` navy `#141f2e`. The `sections` block forces light text on `o_cc4`/`o_cc5`; because Bootstrap's `.card` white bg beats Odoo's `o_cc` bg, cards carrying those combos also get an explicit navy/blue background so text stays legible. Avoid a blanket `#wrapwrap { color }` that fights the theme's per-combo text colors.
+
+> **Card sub-description hidden (2026-07-24):** `description_sale` now equals the product name, so the shop block hides `.oe_subdescription`/`.o_wsale_product_sub` on `.o_website_sale_products` to avoid a doubled title on category cards.
+
+> **Shop selectors (saas~19.2, verified 2026-07-22):** cards `.oe_product .oe_product_cart`; title `.o_wsale_products_item_title`; sub/SKU `.oe_subdescription` / `.o_wsale_product_sub`; price `.oe_currency_value`; buttons `.o_wsale_product_btn .btn`, `#add_to_cart`; search `.o_searchbar_form`; ribbon `.o_ribbon`. Listing body `o_website_sale_products`, detail body `o_website_sale_product`. **Cart/checkout/portal NOT yet themed** — see checklist in new-odoo-project SKILL.md.
 
 ---
 
@@ -119,18 +131,23 @@ c.write("website", [site_id], {"custom_code_head": new_head})
 
 ---
 
-## Design Decisions (19prince)
+## Design Decisions (Kerger)
+
+Source of truth: the **Kerger Design System** on claude.ai/design (see CLAUDE.md). Key values:
 
 | Decision | Value | Rationale |
 |---|---|---|
-| Brand orange | `#EB6B08` | Used on footer divider bar, CTA accents |
-| Light page bg | `#f4f6f9` with 32px light grid | Shop, blog, contact pages |
-| Light grid lines | `rgba(0,0,0,.035)` | Very subtle on light pages |
-| Dark page bg | `#071222` | Homepage, header, footer — blueprint theme |
-| Dark grid lines | `rgba(59,142,234,.07)` at 28px | Blueprint grid on dark surfaces |
-| Form input bg | `#F1F2F6` | Slight off-white to distinguish from page bg |
-| Title banners | Dark navy `#071222` + blueprint grid + white text | All `section.s_title` globally |
-| Footer style | Dark navy bookend + `#EB6B08` orange divider bar | Contrasts both light and dark pages |
+| Brand blue | `#00B9F2` | Logo background field — primary buttons, links (dark surfaces), focus rings |
+| Brand orange | `#FF5B1E` | Logo tagline band — accent CTAs, link hover |
+| Link color (light bg) | `#0087B3` hover `#D9430E` | Darkened for contrast on white |
+| Dark surface | `#0B2942` | Sampled from marine photography shadows — footer, dark sections |
+| Text ink | `#0B1B26` | Warmer near-black navy |
+| Light backgrounds | white / `#F4F7F9` / `#E7EDF1` | Cool blue-grey neutral ramp |
+| Borders | 1px `#D3DDE3`/`#AEBCCA` | Thin, low-contrast, never decorative |
+| Radius | 6px (3–10px range) | Small, functional only — brand precedent is square |
+| Shadows | navy-tinted, hover-only on cards | `0 4px 12px rgba(11,41,66,.10)` |
+| Motion | 120–200ms ease-out, no bounce | Utilitarian B2B brand |
+| No gradients | flat saturated fields only | Gradients appear only as photo scrims |
 
 ---
 

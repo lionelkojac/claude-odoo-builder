@@ -156,3 +156,39 @@ Write arch:
 ```json
 {"model": "ir.ui.view", "method": "write", "args": [[view_id], {"arch": "<t t-name=...>...</t>"}]}
 ```
+
+---
+
+## Multi-Website Caveat (Kerger DB)
+
+`push_page.py` resolves pages by URL **only** — but this DB has 5 website records and
+duplicate URLs across them (e.g. `/about-us` exists on website 1 *and* website 4).
+`pages[0]` is not guaranteed to be the live site's page. For any URL that exists on
+more than one website, do NOT use `push_page.py --update`; instead write the arch
+directly to the correct `view_id` (look it up with a `website_id` filter first),
+reusing the view's existing `<t t-name>` wrapper. Backup `arch_db` before writing.
+
+## Translations (per-visitor language)
+
+After pushing an English arch, add Dutch via term translations on the same view —
+never a second page:
+
+```python
+c._execute_kw('ir.ui.view', 'update_field_translations',
+              [[view_id], 'arch_db', {'nl_NL': {"English term": "Dutch term", ...}}], {})
+```
+
+Terms must match Odoo's **exact** source strings — don't hand-type them. Get them with
+`get_field_translations([[view_id]], 'arch_db')` and copy each `source` verbatim: they
+keep XML entities (`&amp;`, `&amp;nbsp;`) and include inline tags like trailing `<br/>`
+as part of the term. A literal `&` or a dropped `<br/>` silently fails to match (no
+error, term just stays English). Verify both `/{url}` and `/nl/{url}` afterwards.
+Done for `/about-us` (view 2362) 2026-07-22.
+
+## Editing an existing page's TEXT only (not layout)
+
+When the user wants copy changed but the design kept: fetch the live `arch_db`, do exact
+string replacements on **text nodes only**, and assert the tag structure is unchanged
+(`re.findall(r'<[^>]+>', arch)` identical before/after) before writing. Do NOT rebuild the
+page from section templates — that replaces their design. Back up `arch_db` first; restoring
+is a single `write` of the backup.

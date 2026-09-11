@@ -146,3 +146,85 @@ These domains can be passed directly to `odoo_client.search_read()` if writing c
 3. **Batch inspection** — `.tmp/pages_list.json` can be parsed to build a site map
 4. **Compare versions** — `diff .tmp/backup_about.html .tmp/draft_about.html` to review changes before pushing
 5. **Test unpublished** — push first, open `/web/preview?url=/about` in Odoo to preview before publishing
+
+---
+
+## Kerger Site Map & Language Setup (verified 2026-07-22)
+
+**Five website records exist in this DB.** The live site is **website 1** (`kerger`, domain kerger.odoo.com). Websites 2 (kerger2), 3 & 5 (Imported Website) have no domain; website 4 (Kergertest) maps to kerger2.odoo.com. Do not archive other websites' homepages — each website needs its own.
+
+**Global vs website-specific pages:** pages with `website_id=False` are global and serve on any website *unless* shadowed by a website-specific page at the same URL. Archived as dead in 2026-07: global `/` (page 2, shadowed everywhere) and global `/contactus` (page 3, unpublished + shadowed).
+
+**Live pages on website 1:** `/` (page 4, view 916), `/about-us` (5), `/pricing` (6), `/privacy` (7), `/contactus` (10), `/code-of-conduct` (11), `/cookie-policy` (12), plus global `/contactus-thank-you` (page 1 — global, do NOT archive) and global `/privacy` fallback (page 18, shadowed on ws1).
+
+**Languages:** en_US (default) + nl_NL both active. Odoo auto-redirects by browser `Accept-Language` (verified: Dutch browser → 303 to `/nl/`). URL scheme: `/` = English, `/nl/` = Dutch. **Content translations largely don't exist** — both URLs serve the same source text (e.g. `/privacy` is Dutch on both sides). To fix a page: put English in the view source (`arch_db`), then add Dutch via `update_field_translations` on the view for `nl_NL` — never by creating a second page at another URL.
+
+---
+
+## Product page spec fields (eCommerce)
+
+The spec list on `/shop/<product>` pages (Internal Reference, IMPA, Voltage, …)
+is **not** a template edit. It's Odoo's built-in eCommerce feature: the template
+`website_sale.ecom_show_extra_fields` (view 2132) loops over
+`website.shop_extra_field_ids` and shows each field **only where the product has
+a value**.
+
+To add/remove/reorder a field on the product page, edit the
+`website.sale.extra.field` records (not the view):
+
+```python
+# add a field to the product page
+imf = c._execute_kw('ir.model.fields','search',
+    [[['model','=','product.template'],['name','=','x_studio_wattage_w']]], {})[0]
+c._execute_kw('website.sale.extra.field','create',
+    [{'field_id': imf, 'sequence': 15, 'website_id': 1}], {})   # label auto-fills
+```
+
+- `name`/`label` are read-only (derived from `field_id`); set only `field_id`,
+  `sequence`, `website_id`.
+- Order = `sequence` then id.
+- Backend Studio form layout (view 3022) is separate — editing it does NOT change
+  the website page.
+
+**Kerger field notes:** Wattage → `x_studio_wattage_w` (char, populated; the
+float `x_studio_wattage2_w` is empty). Product description → `x_studio_description_long`
+(multiline **text**, ~50 products, real copy). NOT the "Description " (trailing
+space, empty), "Multiline description" (empty), or `x_AI_description`
+("Full description", char — contains test junk). Added Wattage (seq 15) and
+Description (seq 30) to website 1's product pages 2026-07-22.
+
+---
+
+## Shop sidebar filters (product attributes)
+
+Odoo's left-sidebar shop filters come **only** from `product.attribute` values —
+Studio custom fields cannot drive them (and on Odoo Online there's no module
+option to change that). `tools/build_product_filters.py` bridges this: it creates
+**no-variant** attributes from Studio fields and links each product to the
+matching value, so the attribute appears as a sidebar filter without generating
+variants.
+
+```bash
+python3 tools/build_product_filters.py --only Socket --dry-run
+python3 tools/build_product_filters.py            # all configured attrs
+```
+
+- Config is the `ATTRS` list (attribute name, source Studio field, value fn).
+  Value fns: `exact`, `bucket_watt` (ranges), `kelvin` (adds " K", skips 0/empty).
+- Idempotent: skips products already linked; reuses existing attributes/values.
+- **Lamps filters built 2026-07-22:** Socket, Voltage (exact); Wattage (buckets
+  ≤2/3–5/6–15/16–40/41–100/100 W+); Color Temperature (2500–4000 K). Lumen pending
+  a field — add an ATTRS entry once `x_studio_lumen` exists and re-run.
+
+> ⚠️ **Pre-existing attributes:** the tool reuses an attribute if one already
+> exists by name. "Color Temperature" pre-existed with `create_variant='always'`
+> and `visibility='hidden'` — had to set visibility=visible manually (create_variant
+> is locked once in use, but 'always' is harmless when each product has one value:
+> no variant explosion). New attributes are created no-variant + visible.
+
+**Voltage buckets (updated 2026-07-22):** Voltage is grouped into nominal
+buckets, not exact values — `bucket_voltage()` maps explicit ranges (110V=100–130,
+220V=200–245) and snaps stragglers to the nearest nominal (30/36→24–28V,
+11/14/18→12V, 4/8→6V). To re-bucket after data changes: clear the Voltage
+attribute's lines + values, then re-run `--only Voltage` (deleting the attribute
+outright is blocked while it's in use).
