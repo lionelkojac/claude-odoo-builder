@@ -266,8 +266,21 @@ def search_products(query=None, code=None, limit=8):
 
     Exact-code hits first, then free-text: a strict all-terms match, topped up
     (if thin) with a scored any-term match. De-duplicated, capped at `limit`.
+
+    The OdooClient is long-lived and authenticates via a web-session cookie that
+    Odoo eventually expires. When that happens every call raises; we drop the
+    cached client (which discarded its password on login and can't re-auth) and
+    rebuild a fresh, freshly-authenticated one, then retry once. Without this a
+    single session expiry would take the advisor down until the process restarts.
     """
-    client = _client()
+    try:
+        return _search(_client(), query, code, limit)
+    except RuntimeError:
+        _cache["client"] = None
+        return _search(_client(), query, code, limit)
+
+
+def _search(client, query, code, limit):
     seen, results = set(), []
 
     def collect(recs):
